@@ -6,7 +6,7 @@ The supplied `robo-icon.ico` is used for the app icon, splash screen, and ROBO i
 
 ## Run locally
 
-ROBO answers general questions with Gemini, computes basic arithmetic locally, and searches Google News only when current news are requested. General AI and Gemini image generation use the server-side `GEMINI_API_KEY`; without it, ROBO can still calculate basic arithmetic and show requested public news, but it does not substitute unrelated search results for answers. Keep the key server-side—never add it to frontend code. Start the app from the repository directory:
+ROBO answers general questions with Gemini when configured, computes basic arithmetic locally, and searches Google News only when current news are requested. Without a Gemini key, general questions use relevant Wikipedia article summaries with source links instead of failing silently. Gemini chat and image generation use the server-side `GEMINI_API_KEY`; keep the key server-side—never add it to frontend code. Start the app from the repository directory:
 
 ```powershell
 python server.py
@@ -14,7 +14,7 @@ python server.py
 
 Then visit `http://127.0.0.1:8765/`. Set `GEMINI_API_KEY` on the server for general AI responses, including code generation. You can optionally set `GEMINI_TEXT_MODEL` to choose a Gemini text model; the default is `gemini-2.5-flash`. The key stays on the server and is never sent to the browser. Google API quota and pricing limits apply.
 
-Current-news requests use Google News' public RSS search and show source links; that endpoint requires internet access and can be temporarily unavailable or rate-limited. Other questions—including science, math word problems, and programming—are sent to Gemini when configured; if unavailable or not configured, ROBO reports that directly and does not fall back to news or encyclopedia search. Basic arithmetic is evaluated locally without `eval`. Gemini can make mistakes, so verify important factual, mathematical, and programming output. Chat history, student profiles, and preferences are stored in the browser. There is no build step or external Python package dependency.
+Current-news requests use Google News' public RSS search and show source links; that endpoint requires internet access and can be temporarily unavailable or rate-limited. Other questions—including science, math word problems, and programming—are sent to Gemini when configured; without a key, ROBO searches Wikipedia for a relevant reference and links its sources. If no article matches, it returns a direct Wikipedia search link. Basic arithmetic is evaluated locally without `eval`. Gemini can make mistakes, so verify important factual, mathematical, and programming output. Chat history, student profiles, and preferences are stored in the browser. There is no build step or external Python package dependency.
 
 ### Gemini API key
 

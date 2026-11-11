@@ -407,6 +407,27 @@ def is_current_news_request(query):
     return bool(re.search(r"\b(?:give me|show me|tell me)\s+(?:the\s+)?(?:news|headlines)\b", query))
 
 
+def answer_from_wikipedia(query):
+    articles = search_wikipedia(query, limit=3)
+    if not articles:
+        search_url = "https://en.wikipedia.org/w/index.php?" + urlencode({"search": query})
+        return {
+            "text": "I couldn't find a reliable encyclopedia match for that exact question. Try a few different keywords.",
+            "sources": [{"title": "Search Wikipedia", "url": search_url, "publisher": "Wikipedia"}],
+        }
+
+    article = articles[0]
+    text = f"Here's an overview of {article['title']}:\n\n{article['text']}"
+    related = [item["title"] for item in articles[1:] if item.get("title")]
+    if related:
+        text += "\n\nRelated topics: " + ", ".join(related)
+    sources = [
+        {key: item[key] for key in ("title", "url", "publisher") if item.get(key)}
+        for item in articles
+    ]
+    return {"text": text, "sources": sources}
+
+
 def generate_gemini_answer(messages, response_style="balanced", news_items=None):
     api_key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
@@ -618,9 +639,7 @@ class RoboHandler(SimpleHTTPRequestHandler):
                 self.send_json(200, {"text": generate_gemini_answer(validated, payload.get("responseStyle")), "sources": []})
                 return
 
-            raise RuntimeError(
-                "ROBO's general AI is not configured on this server. Set GEMINI_API_KEY on the server to answer questions beyond basic arithmetic and news search."
-            )
+            self.send_json(200, answer_from_wikipedia(query))
         except (ValueError, UnicodeDecodeError):
             self.send_json(400, {"error": "The request body must be valid JSON."})
         except RuntimeError as error:

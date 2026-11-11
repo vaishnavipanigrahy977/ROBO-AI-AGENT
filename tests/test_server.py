@@ -341,37 +341,47 @@ class ServerEndpointTests(unittest.TestCase):
         self.assertIn("Python.", request_body["contents"][-1]["parts"][0]["text"])
         self.assertIn("working code", request_body["system_instruction"]["parts"][0]["text"])
 
-    def test_chat_endpoint_explains_when_general_ai_is_not_configured(self):
+    def test_chat_endpoint_answers_general_questions_from_wikipedia_without_gemini(self):
+        article = {
+            "title": "Navaratri",
+            "text": "Navaratri is a Hindu festival celebrated over nine nights.",
+            "url": "https://en.wikipedia.org/?curid=42",
+            "publisher": "Wikipedia",
+        }
         with patch.dict("os.environ", {"GEMINI_API_KEY": ""}), \
                 patch("server.search_news") as news, \
-                patch("server.search_wikipedia") as wikipedia:
+                patch("server.search_wikipedia", return_value=[article]) as wikipedia:
             response = self.post_chat({
                 "messages": [{
                     "role": "user",
-                    "text": "Explain why the sky appears blue.",
+                    "text": "What is Navaratri?",
                 }]
             })
 
-        self.assertEqual(response.code, 502)
-        self.assertIn("general AI is not configured", json.loads(response.read())["error"])
+        result = json.loads(response.read())
+        self.assertEqual(response.code, 200)
+        self.assertIn("Navaratri is a Hindu festival", result["text"])
+        self.assertEqual(result["sources"][0]["url"], article["url"])
+        wikipedia.assert_called_once_with("What is Navaratri?", limit=3)
         news.assert_not_called()
-        wikipedia.assert_not_called()
 
-    def test_programming_request_without_ai_does_not_fall_back_to_search(self):
+    def test_chat_endpoint_returns_wikipedia_search_link_when_no_article_matches(self):
         with patch.dict("os.environ", {"GEMINI_API_KEY": ""}), \
                 patch("server.search_news") as news, \
-                patch("server.search_wikipedia") as wikipedia:
+                patch("server.search_wikipedia", return_value=[]):
             response = self.post_chat({
                 "messages": [{
                     "role": "user",
-                    "text": "give me the code in python to print my name vaishnavi",
+                    "text": "How do I build a quantum-powered garden?",
                 }]
             })
 
-        self.assertEqual(response.code, 502)
-        self.assertIn("general AI is not configured", json.loads(response.read())["error"])
+        result = json.loads(response.read())
+        self.assertEqual(response.code, 200)
+        self.assertIn("couldn't find a reliable encyclopedia match", result["text"])
+        self.assertIn("Search Wikipedia", result["sources"][0]["title"])
+        self.assertIn("quantum-powered", result["sources"][0]["url"])
         news.assert_not_called()
-        wikipedia.assert_not_called()
 
     def test_chat_endpoint_validates_messages(self):
         response = self.post_chat({"messages": [{"role": "system", "text": "bad role"}]})
