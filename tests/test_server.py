@@ -13,6 +13,27 @@ import server
 
 
 class PublicSourceTests(unittest.TestCase):
+    def test_daily_regional_news_query_is_detected(self):
+        self.assertTrue(server.is_current_news_request(
+            "What are the daily news updates in New Delhi, India?"
+        ))
+        self.assertTrue(server.is_current_news_request("Daily news in New Delhi"))
+
+    def test_daily_news_search_query_keeps_location_and_removes_question_filler(self):
+        self.assertEqual(
+            server.news_search_query("What are the daily news updates in New Delhi, India?"),
+            "New Delhi India news today",
+        )
+
+    def test_indian_news_query_uses_indian_google_news_edition(self):
+        with patch("server.fetch_xml", return_value=ET.fromstring("<rss/>")) as fetch:
+            server.search_news("New Delhi India news today")
+
+        url = fetch.call_args.args[0]
+        self.assertIn("hl=en-IN", url)
+        self.assertIn("gl=IN", url)
+        self.assertIn("ceid=IN%3Aen", url)
+
     def test_wikipedia_search_returns_article_summaries_and_links(self):
         search_response = {
             "query": {"search": [
@@ -224,6 +245,19 @@ class ServerEndpointTests(unittest.TestCase):
         self.assertFalse(config["providers"]["google"]["configured"])
         self.assertFalse(config["providers"]["microsoft"]["configured"])
 
+    def test_public_origin_uses_active_railway_host_when_configured_domain_is_stale(self):
+        handler = MagicMock()
+        handler.headers = {
+            "Host": "web-production-e8f7b068.up.railway.app",
+            "X-Forwarded-Proto": "https",
+        }
+        with patch.dict("os.environ", {
+            "ROBO_PUBLIC_URL": "https://web-production-62b91153.up.railway.app/",
+        }):
+            origin = server.public_origin(handler)
+
+        self.assertEqual(origin, "https://web-production-e8f7b068.up.railway.app")
+
     def test_oauth_exchange_sets_session_cookie_and_session_endpoint_reads_it(self):
         profile = {"signedIn": True, "provider": "Google", "displayName": "Ada", "email": "ada@example.com"}
         with patch.dict("os.environ", {"GOOGLE_CLIENT_ID": "public-id", "GOOGLE_CLIENT_SECRET": "server-secret"}), patch(
@@ -294,6 +328,31 @@ class ServerEndpointTests(unittest.TestCase):
         self.assertIn("Science update", result["text"])
         self.assertEqual(result["sources"][0]["url"], news_result[0]["url"])
         news.assert_called_once()
+        wikipedia.assert_not_called()
+
+    def test_daily_regional_news_uses_live_headlines_when_gemini_fails(self):
+        news_result = [{
+            "title": "Delhi traffic update",
+            "text": "A current report from New Delhi.",
+            "url": "https://news.example/delhi",
+            "publisher": "Example News",
+            "publishedAt": "today",
+        }]
+        query = "What are the daily news updates in New Delhi, India?"
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "configured-key"}), \
+                patch("server.search_news", return_value=news_result) as news, \
+                patch("server.generate_gemini_answer", side_effect=RuntimeError(
+                    "ROBO's AI service rejected its server configuration."
+                )), \
+                patch("server.search_wikipedia") as wikipedia:
+            response = self.post_chat({"messages": [{"role": "user", "text": query}]})
+
+        result = json.loads(response.read())
+        self.assertEqual(response.code, 200)
+        self.assertIn("Delhi traffic update", result["text"])
+        self.assertIn("New Delhi", result["text"])
+        self.assertEqual(result["sources"][0]["url"], news_result[0]["url"])
+        news.assert_called_once_with("New Delhi India news today")
         wikipedia.assert_not_called()
 
     def test_chat_endpoint_uses_gemini_for_general_questions_and_code(self):
