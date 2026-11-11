@@ -5,7 +5,7 @@ import threading
 import unittest
 import xml.etree.ElementTree as ET
 from http.server import ThreadingHTTPServer
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -124,13 +124,14 @@ class ServerEndpointTests(unittest.TestCase):
         except HTTPError as error:
             return error
 
-    def test_health_reports_no_api_key_requirement(self):
-        response = urlopen(self.base_url + "/api/health", timeout=3)
-        health = json.loads(response.read())
+    def test_health_reports_general_answer_configuration_without_exposing_key(self):
+        with patch.dict("os.environ", {"GEMINI_API_KEY": ""}):
+            response = urlopen(self.base_url + "/api/health", timeout=3)
+            health = json.loads(response.read())
 
         self.assertTrue(health["ok"])
-        self.assertEqual(health["mode"], "public-source-search")
-        self.assertFalse(health["apiKeyRequired"])
+        self.assertEqual(health["mode"], "gemini-chat-public-news-search")
+        self.assertFalse(health["generalAnswersConfigured"])
 
     def test_image_config_does_not_expose_api_key(self):
         with patch.dict("os.environ", {"GEMINI_API_KEY": "server-only-secret"}):
@@ -262,18 +263,115 @@ class ServerEndpointTests(unittest.TestCase):
 
         self.assertEqual(session, {"signedIn": False})
 
-    def test_chat_endpoint_searches_latest_user_question_without_api_key(self):
-        result = {"text": "Found this.", "sources": []}
-        with patch("server.search_sources", return_value=result) as search:
-            response = self.post_chat({"messages": [
-                {"role": "user", "text": "Hello"},
-                {"role": "assistant", "text": "Hi there."},
-                {"role": "user", "text": "What is in today's news?"},
-            ]})
+    def test_chat_endpoint_calculates_arithmetic_without_search_or_api_key(self):
+        with patch.dict("os.environ", {"GEMINI_API_KEY": ""}), \
+                patch("server.search_news") as news, \
+                patch("server.search_wikipedia") as wikipedia:
+            response = self.post_chat({"messages": [{"role": "user", "text": "12 + 34"}]})
 
         self.assertEqual(response.code, 200)
-        self.assertEqual(json.loads(response.read()), result)
-        search.assert_called_once_with("What is in today's news?")
+        self.assertEqual(json.loads(response.read()), {"text": "46", "sources": []})
+        news.assert_not_called()
+        wikipedia.assert_not_called()
+
+    def test_chat_endpoint_searches_news_only_for_current_news_requests(self):
+        news_result = [{
+            "title": "Science update",
+            "text": "A current report.",
+            "url": "https://news.example/article",
+            "publisher": "Example News",
+            "publishedAt": "today",
+        }]
+        with patch.dict("os.environ", {"GEMINI_API_KEY": ""}), \
+                patch("server.search_news", return_value=news_result) as news, \
+                patch("server.search_wikipedia") as wikipedia:
+            response = self.post_chat({"messages": [
+                {"role": "user", "text": "What are today's latest science news headlines?"}
+            ]})
+
+        result = json.loads(response.read())
+        self.assertEqual(response.code, 200)
+        self.assertIn("Science update", result["text"])
+        self.assertEqual(result["sources"][0]["url"], news_result[0]["url"])
+        news.assert_called_once()
+        wikipedia.assert_not_called()
+
+    def test_chat_endpoint_uses_gemini_for_general_questions_and_code(self):
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "server-only-secret"}), \
+                patch("server.generate_gemini_answer", return_value="Here is the Python code.") as generate, \
+                patch("server.search_news") as news, \
+                patch("server.search_wikipedia") as wikipedia:
+            response = self.post_chat({
+                "messages": [
+                    {"role": "user", "text": "Write Python code that adds two numbers."},
+                    {"role": "assistant", "text": "Sure."},
+                    {"role": "user", "text": "Include input validation."},
+                ],
+                "responseStyle": "detailed",
+            })
+
+        self.assertEqual(response.code, 200)
+        self.assertEqual(json.loads(response.read()), {"text": "Here is the Python code.", "sources": []})
+        passed_messages, response_style = generate.call_args.args
+        self.assertEqual(passed_messages[-1]["text"], "Include input validation.")
+        self.assertEqual(response_style, "detailed")
+        news.assert_not_called()
+        wikipedia.assert_not_called()
+
+    def test_gemini_answer_uses_server_key_and_preserves_chat_context(self):
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = json.dumps({
+            "candidates": [{"content": {"parts": [{"text": "Here is the code."}]}}]
+        }).encode()
+        messages = [
+            {"role": "user", "text": "Make a calculator."},
+            {"role": "assistant", "text": "Which language?"},
+            {"role": "user", "text": "Python."},
+        ]
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "server-only-secret"}), \
+                patch("server.urlopen", return_value=response) as open_url:
+            answer = server.generate_gemini_answer(messages, "detailed")
+
+        request = open_url.call_args.args[0]
+        request_body = json.loads(request.data)
+        self.assertEqual(answer, "Here is the code.")
+        self.assertEqual(request.get_header("X-goog-api-key"), "server-only-secret")
+        self.assertEqual(request_body["contents"][0]["role"], "user")
+        self.assertIn("Python.", request_body["contents"][-1]["parts"][0]["text"])
+        self.assertIn("working code", request_body["system_instruction"]["parts"][0]["text"])
+
+    def test_chat_endpoint_explains_when_general_ai_is_not_configured(self):
+        with patch.dict("os.environ", {"GEMINI_API_KEY": ""}), \
+                patch("server.search_news") as news, \
+                patch("server.search_wikipedia") as wikipedia:
+            response = self.post_chat({
+                "messages": [{
+                    "role": "user",
+                    "text": "Explain why the sky appears blue.",
+                }]
+            })
+
+        self.assertEqual(response.code, 502)
+        self.assertIn("general AI is not configured", json.loads(response.read())["error"])
+        news.assert_not_called()
+        wikipedia.assert_not_called()
+
+    def test_programming_request_without_ai_does_not_fall_back_to_search(self):
+        with patch.dict("os.environ", {"GEMINI_API_KEY": ""}), \
+                patch("server.search_news") as news, \
+                patch("server.search_wikipedia") as wikipedia:
+            response = self.post_chat({
+                "messages": [{
+                    "role": "user",
+                    "text": "give me the code in python to print my name vaishnavi",
+                }]
+            })
+
+        self.assertEqual(response.code, 502)
+        self.assertIn("general AI is not configured", json.loads(response.read())["error"])
+        news.assert_not_called()
+        wikipedia.assert_not_called()
 
     def test_chat_endpoint_validates_messages(self):
         response = self.post_chat({"messages": [{"role": "system", "text": "bad role"}]})

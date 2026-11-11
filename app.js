@@ -21,6 +21,19 @@ const SCHEDULE_STORAGE_KEY = "robo-schedule-v1";
 const CALENDAR_STORAGE_KEY = "robo-calendar-v1";
 const TIMETABLE_STORAGE_KEY = "robo-timetable-v1";
 const ALARM_STORAGE_KEY = "robo-alarms-v1";
+const MAX_TIMER_SECONDS = 5 * 60 * 60;
+const ALARM_SOUNDS = [
+  { id: "classic", name: "Classic chime", wave: "sine", notes: [523, 659, 784, 659] },
+  { id: "bright", name: "Bright bells", wave: "sine", notes: [784, 988, 1175, 988] },
+  { id: "digital", name: "Digital pulse", wave: "square", notes: [660, 880, 660, 1047] },
+  { id: "marimba", name: "Marimba", wave: "triangle", notes: [392, 523, 659, 523] },
+  { id: "rising", name: "Rising tones", wave: "sine", notes: [392, 494, 587, 698, 880] },
+  { id: "soft", name: "Soft waves", wave: "sine", notes: [440, 554, 440, 554] },
+  { id: "woodblock", name: "Woodblock", wave: "triangle", notes: [880, 660, 880, 660] },
+  { id: "chords", name: "Gentle chords", wave: "sine", notes: [523, 659, 784, 1047, 784, 659] },
+  { id: "sparkle", name: "Sparkle", wave: "triangle", notes: [1047, 1319, 1568, 1319] },
+  { id: "double-beep", name: "Double beep", wave: "square", notes: [740, 740, 988, 988] }
+];
 const TIMETABLE_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const TIMETABLE_ROW_TIMES = ["08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00"];
 const DEFAULT_TIMETABLE = TIMETABLE_ROW_TIMES.map((time, index) => ({
@@ -37,7 +50,8 @@ let conversations = loadStored(CHAT_STORAGE_KEY, []);
 let students = loadStored(STUDENTS_STORAGE_KEY, []);
 let authState = { signedIn: false, provider: "Guest", displayName: "Guest", email: "" };
 let oauthConfig = null;
-let settings = loadStored(SETTINGS_STORAGE_KEY, { theme: "light", responseStyle: "balanced" });
+let settings = loadStored(SETTINGS_STORAGE_KEY, { theme: "light", responseStyle: "balanced", alarmSound: "classic" });
+if (!ALARM_SOUNDS.some(sound => sound.id === settings.alarmSound)) settings.alarmSound = "classic";
 let timetableEntries = loadStored(TIMETABLE_STORAGE_KEY, DEFAULT_TIMETABLE);
 let alarmEntries = loadStored(ALARM_STORAGE_KEY, [
   { id: "alarm-1", when: "2026-11-11T07:30", label: "Wake-up review", ringing: false },
@@ -52,6 +66,9 @@ let stopwatchHandle = null;
 let timerRemainingMs = 0;
 let timerHandle = null;
 let timerRunning = false;
+let alarmAudioContext = null;
+let activeAlarmOscillators = [];
+let alarmSoundTimeout = null;
 let lastTimetableAnnouncement = null;
 let scheduleItems = loadStored(SCHEDULE_STORAGE_KEY, [
   { id: "schedule-1", title: "Freshwater swamp review", date: "2026-11-12", time: "09:00", notes: "Summarize the habitat and biodiversity connections." },
@@ -215,7 +232,11 @@ function renderConversation() {
       const avatar = document.createElement("span");
       avatar.className = "robo-avatar message-avatar";
       avatar.setAttribute("aria-hidden", "true");
-      avatar.textContent = "R";
+      const icon = document.createElement("img");
+      icon.className = "robo-icon";
+      icon.src = "robo-icon.ico";
+      icon.alt = "";
+      avatar.append(icon);
       bubble.append(avatar);
     }
     const text = document.createElement("p");
@@ -497,8 +518,8 @@ async function requestAnswer(conversation) {
       })
     });
     const result = await response.json();
-    if (!response.ok) throw new Error(result.error || `Public search returned HTTP ${response.status}.`);
-    if (typeof result.text !== "string" || !result.text.trim()) throw new Error("ROBO found no readable search results. Please try again.");
+    if (!response.ok) throw new Error(result.error || `ROBO returned HTTP ${response.status}.`);
+    if (typeof result.text !== "string" || !result.text.trim()) throw new Error("ROBO returned an empty answer. Please try again.");
     const lastQuestion = [...conversation.messages].reverse().find(message => message.role === "user");
     const exploration = lastQuestion ? findExploration(lastQuestion.text) : null;
     conversation.messages.push({
@@ -514,7 +535,7 @@ async function requestAnswer(conversation) {
   } catch (error) {
     console.error("ROBO could not answer the message.", error);
     document.querySelectorAll(".chat-status").forEach(status => status.remove());
-    showChatStatus(error.message || "ROBO couldn't reach its public search sources. Please try again.", true);
+    showChatStatus(error.message || "ROBO couldn't answer that question. Please try again.", true);
   } finally {
     sendingMessage = false;
     sendButton.disabled = false;
@@ -640,19 +661,25 @@ function renderTimetable() {
   const heading = [`<div class="timetable-header-cell">Time</div>`].concat(TIMETABLE_DAYS.map(day => `<div class="timetable-header-cell">${day}</div>`)).join("");
   const rows = timetableEntries.map(row => {
     const cells = TIMETABLE_DAYS.map(day => `
-      <input
+      <textarea
         class="timetable-cell"
-        type="text"
-        value="${escapeHtml(row[day] || "")}"
+        rows="1"
         data-time="${row.time}"
         data-day="${day}"
         aria-label="${day} at ${row.time}"
         placeholder="Write a subject"
-      >
+      >${escapeHtml(row[day] || "")}</textarea>
     `).join("");
-    return `<div class="timetable-row"><input class="timetable-time" type="text" value="${escapeHtml(row.time)}" data-time-field="${row.time}" aria-label="Time for row ${row.time}" data-row-time="${row.time}">${cells}</div>`;
+    return `<div class="timetable-row"><textarea class="timetable-time" rows="1" data-time-field="${row.time}" aria-label="Time for row ${row.time}" data-row-time="${row.time}">${escapeHtml(row.time)}</textarea>${cells}</div>`;
   }).join("");
   grid.innerHTML = `<div class="timetable-header">${heading}</div>${rows}`;
+  grid.querySelectorAll(".timetable-cell").forEach(resizeTimetableCell);
+  grid.querySelectorAll(".timetable-time").forEach(resizeTimetableCell);
+}
+
+function resizeTimetableCell(cell) {
+  cell.style.height = "auto";
+  cell.style.height = `${Math.max(60, cell.scrollHeight)}px`;
 }
 
 function hideSplashScreen() {
@@ -738,27 +765,88 @@ async function signOutUser() {
   showToast("Signed out of ROBO.");
 }
 
-function triggerAlarmTone() {
+function getAlarmAudioContext() {
+  const AudioCtor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtor) return null;
+  if (!alarmAudioContext) alarmAudioContext = new AudioCtor();
+  return alarmAudioContext;
+}
+
+function stopAlarmTone() {
+  if (alarmSoundTimeout) {
+    window.clearTimeout(alarmSoundTimeout);
+    alarmSoundTimeout = null;
+  }
+  activeAlarmOscillators.forEach(oscillator => {
+    try { oscillator.stop(); } catch (error) { /* Oscillator may already have stopped. */ }
+  });
+  activeAlarmOscillators = [];
+}
+
+function triggerAlarmTone(soundId = settings.alarmSound) {
   try {
-    const AudioCtor = window.AudioContext || window.webkitAudioContext;
-    if (!AudioCtor) return;
-    const audio = new AudioCtor();
-    const oscillator = audio.createOscillator();
-    const gainNode = audio.createGain();
-    oscillator.type = "sine";
-    oscillator.frequency.setValueAtTime(440, audio.currentTime);
-    oscillator.frequency.exponentialRampToValueAtTime(660, audio.currentTime + 1.1);
-    gainNode.gain.setValueAtTime(0.0001, audio.currentTime);
-    gainNode.gain.exponentialRampToValueAtTime(0.05, audio.currentTime + 0.15);
-    gainNode.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + 1.6);
-    oscillator.connect(gainNode);
-    gainNode.connect(audio.destination);
-    oscillator.start();
-    oscillator.stop(audio.currentTime + 1.7);
-    oscillator.onended = () => audio.close();
+    const audio = getAlarmAudioContext();
+    if (!audio) {
+      showToast("Alarm sounds are not supported by this browser.");
+      return;
+    }
+    stopAlarmTone();
+    const sound = ALARM_SOUNDS.find(option => option.id === soundId) || ALARM_SOUNDS[0];
+    const beginPlayback = () => {
+      const startAt = audio.currentTime + 0.03;
+      const duration = 5;
+      const interval = 0.36;
+      for (let offset = 0, index = 0; offset < duration; offset += interval, index += 1) {
+        const noteDuration = Math.min(0.25, duration - offset);
+        const oscillator = audio.createOscillator();
+        const gain = audio.createGain();
+        const noteStart = startAt + offset;
+        const noteEnd = noteStart + noteDuration;
+        oscillator.type = sound.wave;
+        oscillator.frequency.setValueAtTime(sound.notes[index % sound.notes.length], noteStart);
+        gain.gain.setValueAtTime(0.0001, noteStart);
+        gain.gain.exponentialRampToValueAtTime(0.045, noteStart + Math.min(0.035, noteDuration / 3));
+        gain.gain.setValueAtTime(0.045, noteEnd - Math.min(0.05, noteDuration / 3));
+        gain.gain.exponentialRampToValueAtTime(0.0001, noteEnd);
+        oscillator.connect(gain);
+        gain.connect(audio.destination);
+        oscillator.start(noteStart);
+        oscillator.stop(noteEnd);
+        activeAlarmOscillators.push(oscillator);
+      }
+      alarmSoundTimeout = window.setTimeout(stopAlarmTone, duration * 1000);
+    };
+    const resumed = audio.state === "suspended" ? audio.resume() : Promise.resolve();
+    resumed.then(beginPlayback).catch(error => {
+      console.warn("Unable to play ROBO alarm tone.", error);
+      showToast("The alarm sound could not be played. Check your browser audio settings.");
+    });
   } catch (error) {
     console.warn("Unable to play ROBO alarm tone.", error);
+    showToast("The alarm sound could not be played. Check your browser audio settings.");
   }
+}
+
+function renderAlarmSoundOptions() {
+  const container = document.querySelector("#alarm-sound-options");
+  if (!container) return;
+  container.innerHTML = ALARM_SOUNDS.map((sound, index) => `
+    <button type="button" class="alarm-sound-option" data-alarm-sound="${sound.id}" aria-pressed="${settings.alarmSound === sound.id}">
+      <span class="alarm-sound-number">${String(index + 1).padStart(2, "0")}</span>
+      <span>${sound.name}</span>
+      <span class="alarm-sound-preview" aria-hidden="true">▶</span>
+    </button>
+  `).join("");
+}
+
+function selectAlarmSound(soundId) {
+  const sound = ALARM_SOUNDS.find(option => option.id === soundId);
+  if (!sound) return;
+  settings.alarmSound = sound.id;
+  saveStored(SETTINGS_STORAGE_KEY, settings);
+  renderAlarmSoundOptions();
+  document.querySelector("#alarm-sound-status").textContent = `Selected ${sound.name}. Playing five-second preview.`;
+  triggerAlarmTone(sound.id);
 }
 
 function renderAlarmList() {
@@ -781,6 +869,12 @@ function renderAlarmList() {
 
 function addAlarm(whenValue, labelValue) {
   if (!whenValue) return;
+  try {
+    const audio = getAlarmAudioContext();
+    if (audio?.state === "suspended") audio.resume().catch(error => console.warn("Unable to prepare ROBO alarm audio.", error));
+  } catch (error) {
+    console.warn("Unable to prepare ROBO alarm audio.", error);
+  }
   const safeLabel = labelValue.trim() || "Morning review";
   const nextAlarm = {
     id: `alarm-${Date.now()}`,
@@ -854,9 +948,38 @@ function updateTimerDisplay() {
   const timerDisplay = document.querySelector("#timer-display");
   if (!timerDisplay) return;
   const totalSeconds = Math.max(0, Math.ceil(timerRemainingMs / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
-  timerDisplay.textContent = `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  timerDisplay.textContent = `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function readTimerInputSeconds() {
+  const hoursInput = document.querySelector("#timer-hours");
+  const minutesInput = document.querySelector("#timer-minutes");
+  const secondsInput = document.querySelector("#timer-seconds");
+  const hours = Math.max(0, Math.min(5, Number(hoursInput.value) || 0));
+  const minutes = Math.max(0, Math.min(59, Number(minutesInput.value) || 0));
+  const seconds = Math.max(0, Math.min(59, Number(secondsInput.value) || 0));
+  const totalSeconds = hours * 3600 + minutes * 60 + seconds;
+  if (totalSeconds > MAX_TIMER_SECONDS) {
+    hoursInput.value = "5";
+    minutesInput.value = "0";
+    secondsInput.value = "0";
+    document.querySelector("#timer-limit-note").textContent = "Maximum timer duration is 5 hours.";
+    return MAX_TIMER_SECONDS;
+  }
+  hoursInput.value = String(hours);
+  minutesInput.value = String(minutes);
+  secondsInput.value = String(seconds);
+  document.querySelector("#timer-limit-note").textContent = "Set up to 5 hours.";
+  return totalSeconds;
+}
+
+function updateTimerFromInputs() {
+  if (timerRunning) return;
+  timerRemainingMs = readTimerInputSeconds() * 1000;
+  updateTimerDisplay();
 }
 
 function stopTimerLoop() {
@@ -868,12 +991,14 @@ function stopTimerLoop() {
 }
 
 function startTimer() {
-  const input = document.querySelector("#timer-input");
-  if (!input) return;
-  if (!timerRemainingMs && Number(input.value) > 0) {
-    timerRemainingMs = Number(input.value) * 60 * 1000;
-  }
+  if (!timerRemainingMs) timerRemainingMs = readTimerInputSeconds() * 1000;
   if (timerRemainingMs <= 0 || timerRunning) return;
+  try {
+    const audio = getAlarmAudioContext();
+    if (audio?.state === "suspended") audio.resume().catch(error => console.warn("Unable to prepare ROBO alarm audio.", error));
+  } catch (error) {
+    console.warn("Unable to prepare ROBO alarm audio.", error);
+  }
   timerRunning = true;
   timerHandle = window.setInterval(() => {
     timerRemainingMs = Math.max(0, timerRemainingMs - 1000);
@@ -892,8 +1017,7 @@ function pauseTimer() {
 
 function resetTimer() {
   stopTimerLoop();
-  const input = document.querySelector("#timer-input");
-  timerRemainingMs = Number(input.value || 0) * 60 * 1000;
+  timerRemainingMs = readTimerInputSeconds() * 1000;
   updateTimerDisplay();
 }
 
@@ -1073,6 +1197,10 @@ document.querySelector("#history-search").addEventListener("input", renderHistor
 document.querySelectorAll(".nav-item").forEach(button => button.addEventListener("click", () => setView(button.dataset.view)));
 document.querySelector("#theme-toggle").addEventListener("click", toggleTheme);
 document.querySelector("#settings-theme").addEventListener("click", toggleTheme);
+document.querySelector("#alarm-sound-options").addEventListener("click", event => {
+  const option = event.target.closest("[data-alarm-sound]");
+  if (option) selectAlarmSound(option.dataset.alarmSound);
+});
 document.querySelector("#clear-history").addEventListener("click", () => {
   if (!conversations.length || !window.confirm("Clear all saved ROBO chats from this browser?")) return;
   conversations = [];
@@ -1156,6 +1284,7 @@ document.querySelector("#timetable-grid").addEventListener("input", event => {
   const cell = event.target.closest(".timetable-cell");
   const timeInput = event.target.closest(".timetable-time");
   if (cell) {
+    resizeTimetableCell(cell);
     const row = timetableEntries.find(item => item.time === cell.dataset.time);
     if (!row) return;
     row[cell.dataset.day] = cell.value;
@@ -1163,6 +1292,7 @@ document.querySelector("#timetable-grid").addEventListener("input", event => {
     return;
   }
   if (timeInput) {
+    resizeTimetableCell(timeInput);
     const row = timetableEntries.find(item => item.time === timeInput.dataset.rowTime);
     if (!row) return;
     const newTime = normalizeTimeString(timeInput.value || "");
@@ -1213,6 +1343,9 @@ document.querySelector("#reset-stopwatch").addEventListener("click", resetStopwa
 document.querySelector("#start-timer").addEventListener("click", startTimer);
 document.querySelector("#pause-timer").addEventListener("click", pauseTimer);
 document.querySelector("#reset-timer").addEventListener("click", resetTimer);
+document.querySelectorAll("#timer-hours, #timer-minutes, #timer-seconds").forEach(input => {
+  input.addEventListener("input", updateTimerFromInputs);
+});
 
 document.querySelector("#add-schedule").addEventListener("click", () => {
   const formShell = document.querySelector("#schedule-form-shell");
@@ -1439,6 +1572,7 @@ renderHistory();
 renderStudents();
 renderSchedule();
 renderAlarmList();
+renderAlarmSoundOptions();
 updateStopwatchDisplay();
 resetTimer();
 updateClock();

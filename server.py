@@ -1,4 +1,5 @@
 import json
+import ast
 import base64
 import hashlib
 import hmac
@@ -25,6 +26,7 @@ MAX_MESSAGES = 40
 MAX_MESSAGE_LENGTH = 8000
 MAX_IMAGE_PROMPT_LENGTH = 2000
 MAX_GENERATED_IMAGE_BYTES = 12 * 1024 * 1024
+MAX_MATH_NODES = 64
 IMAGE_REQUEST_LIMIT = 5
 IMAGE_REQUEST_WINDOW = 60
 USER_AGENT = "ROBO-Learning-Assistant/1.0 (public-source search demo)"
@@ -344,6 +346,139 @@ def search_sources(query):
     return {"text": text, "sources": sources, "searchedAt": datetime.now(timezone.utc).isoformat()}
 
 
+def calculate_arithmetic(query):
+    match = re.fullmatch(
+        r"\s*(?:(?:what is|calculate|compute|evaluate|solve)\s+)?"
+        r"([0-9\s()+\-*/.]+)\s*\??\s*",
+        query,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    expression = match.group(1).strip()
+    if not re.search(r"\d\s*[+\-*/]", expression) and not re.search(r"[+\-*/]\s*\d", expression):
+        return None
+
+    operators = {
+        ast.Add: lambda left, right: left + right,
+        ast.Sub: lambda left, right: left - right,
+        ast.Mult: lambda left, right: left * right,
+        ast.Div: lambda left, right: left / right,
+        ast.FloorDiv: lambda left, right: left // right,
+        ast.Mod: lambda left, right: left % right,
+        ast.USub: lambda value: -value,
+        ast.UAdd: lambda value: value,
+    }
+
+    def evaluate(node, depth=0):
+        if depth > MAX_MATH_NODES:
+            raise ValueError("Expression is too complex.")
+        if isinstance(node, ast.Expression):
+            return evaluate(node.body, depth + 1)
+        if isinstance(node, ast.Constant) and type(node.value) in (int, float):
+            return node.value
+        if isinstance(node, ast.BinOp) and type(node.op) in operators:
+            left = evaluate(node.left, depth + 1)
+            right = evaluate(node.right, depth + 1)
+            return operators[type(node.op)](left, right)
+        if isinstance(node, ast.UnaryOp) and type(node.op) in operators:
+            return operators[type(node.op)](evaluate(node.operand, depth + 1))
+        raise ValueError("Unsupported arithmetic expression.")
+
+    try:
+        tree = ast.parse(expression, mode="eval")
+        if sum(1 for _ in ast.walk(tree)) > MAX_MATH_NODES:
+            return None
+        result = evaluate(tree)
+        if not isinstance(result, (int, float)) or abs(result) > 1e100:
+            return None
+    except (SyntaxError, ValueError, ZeroDivisionError, OverflowError):
+        return None
+    formatted = format(result, ".12g") if isinstance(result, float) else str(result)
+    return {"text": formatted, "sources": []}
+
+
+def is_current_news_request(query):
+    query = query.lower()
+    if re.search(r"\b(?:latest|today|current|breaking|recent|updates?|happening now)\b", query) and re.search(
+        r"\b(?:news|headlines|current events)\b", query
+    ):
+        return True
+    return bool(re.search(r"\b(?:give me|show me|tell me)\s+(?:the\s+)?(?:news|headlines)\b", query))
+
+
+def generate_gemini_answer(messages, response_style="balanced", news_items=None):
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "General AI answers are not configured on this server. Set GEMINI_API_KEY in the server environment and restart ROBO."
+        )
+    style_guidance = {
+        "concise": "Keep the answer concise and direct.",
+        "balanced": "Give a clear, balanced explanation with useful detail.",
+        "detailed": "Give a thorough explanation, organized for easy reading.",
+    }.get(response_style, "Give a clear, balanced explanation with useful detail.")
+    system_instruction = (
+        "You are ROBO, a helpful and accurate learning companion. Answer the user's actual question directly. "
+        "For calculations, show the result and explain briefly when useful. For programming requests, provide "
+        "working code in the requested language, fenced code blocks, and brief run/use instructions. State "
+        "important assumptions, and do not invent facts or claim to have performed actions you did not perform. "
+        + style_guidance
+    )
+    contents = []
+    for message in messages:
+        role = "model" if message["role"] == "assistant" else "user"
+        if contents and contents[-1]["role"] == role:
+            contents[-1]["parts"][0]["text"] += "\n\n" + message["text"]
+        else:
+            contents.append({"role": role, "parts": [{"text": message["text"]}]})
+    if news_items is not None:
+        news_context = "\n\nCurrent news search results (use only these for current claims; cite their titles):\n"
+        news_context += "\n".join(
+            f"- {item['title']} ({item.get('publisher', 'Source')}, {item.get('publishedAt', 'date unavailable')}): "
+            f"{item.get('text', '')} [{item['url']}]"
+            for item in news_items
+        ) or "No current news results were found."
+        contents[-1]["parts"][0]["text"] += news_context
+        system_instruction += " Summarize the supplied current-news results without adding unverified current claims."
+    model = os.environ.get("GEMINI_TEXT_MODEL", "gemini-2.5-flash").strip()
+    request = Request(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{quote(model, safe='')}:generateContent",
+        data=json.dumps({
+            "system_instruction": {"parts": [{"text": system_instruction}]},
+            "contents": contents,
+        }).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "x-goog-api-key": api_key,
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=45) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except HTTPError as error:
+        if error.code == 429:
+            raise RuntimeError("ROBO's AI service is at its current quota limit. Try again later.") from error
+        if error.code in (400, 401, 403, 404):
+            raise RuntimeError("ROBO's AI service rejected its server configuration. Check the Gemini key and text model settings.") from error
+        raise RuntimeError("ROBO's AI service is temporarily unavailable. Please try again.") from error
+    except (URLError, TimeoutError, ValueError, UnicodeDecodeError) as error:
+        raise RuntimeError("ROBO could not reach its AI service. Please try again.") from error
+    candidates = result.get("candidates", []) if isinstance(result, dict) else []
+    if not isinstance(candidates, list) or not candidates or not isinstance(candidates[0], dict):
+        raise RuntimeError("ROBO's AI service returned no answer. Please rephrase your question and try again.")
+    content = candidates[0].get("content", {})
+    parts = content.get("parts", []) if isinstance(content, dict) else []
+    if not isinstance(parts, list):
+        parts = []
+    text = "\n".join(part.get("text", "") for part in parts if isinstance(part.get("text"), str)).strip()
+    if not text:
+        raise RuntimeError("ROBO's AI service returned no answer. Please rephrase your question and try again.")
+    return text
+
+
 class RoboHandler(SimpleHTTPRequestHandler):
     def send_json(self, status, payload, headers=None):
         body = json.dumps(payload).encode("utf-8")
@@ -358,7 +493,11 @@ class RoboHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/api/health":
-            self.send_json(200, {"ok": True, "mode": "public-source-search", "apiKeyRequired": False})
+            self.send_json(200, {
+                "ok": True,
+                "mode": "gemini-chat-public-news-search",
+                "generalAnswersConfigured": bool(os.environ.get("GEMINI_API_KEY", "").strip()),
+            })
             return
         if self.path == "/api/image/config":
             self.send_json(200, {"configured": bool(os.environ.get("GEMINI_API_KEY", "").strip())})
@@ -443,11 +582,52 @@ class RoboHandler(SimpleHTTPRequestHandler):
             if not query:
                 self.send_json(400, {"error": "Add a question before sending."})
                 return
-            self.send_json(200, search_sources(query))
+            arithmetic = calculate_arithmetic(query)
+            if arithmetic is not None:
+                self.send_json(200, arithmetic)
+                return
+
+            news_request = is_current_news_request(query)
+            api_configured = bool(os.environ.get("GEMINI_API_KEY", "").strip())
+            if news_request:
+                news = search_news(query[:300])
+                if api_configured:
+                    answer = generate_gemini_answer(validated, payload.get("responseStyle"), news)
+                    sources = [
+                        {key: item[key] for key in ("title", "url", "publisher", "publishedAt") if item.get(key)}
+                        for item in news
+                    ]
+                    self.send_json(200, {"text": answer, "sources": sources})
+                else:
+                    lines = ["Here are the latest news results I found:"]
+                    lines.extend(
+                        f"- {item['title']} ({item.get('publisher', 'Source')})"
+                        + (f": {item['text']}" if item.get("text") else "")
+                        for item in news
+                    )
+                    self.send_json(200, {
+                        "text": "\n\n".join(lines) if news else "I couldn't find current news results for that search.",
+                        "sources": [
+                            {key: item[key] for key in ("title", "url", "publisher", "publishedAt") if item.get(key)}
+                            for item in news
+                        ],
+                    })
+                return
+
+            if api_configured:
+                self.send_json(200, {"text": generate_gemini_answer(validated, payload.get("responseStyle")), "sources": []})
+                return
+
+            raise RuntimeError(
+                "ROBO's general AI is not configured on this server. Set GEMINI_API_KEY on the server to answer questions beyond basic arithmetic and news search."
+            )
         except (ValueError, UnicodeDecodeError):
             self.send_json(400, {"error": "The request body must be valid JSON."})
         except RuntimeError as error:
             self.send_json(502, {"error": str(error)})
+        except (HTTPError, URLError, TimeoutError, ET.ParseError) as error:
+            print(f"Chat source request failed: {error}", flush=True)
+            self.send_json(502, {"error": "ROBO could not reach the requested information source. Please try again."})
 
     def handle_image_generation(self):
         content_length = self.headers.get("Content-Length", "0")
@@ -535,5 +715,5 @@ class RoboHandler(SimpleHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print(f"ROBO is running at http://{HOST}:{PORT}/ (public-source search; no API key required)", flush=True)
+    print(f"ROBO is running at http://{HOST}:{PORT}/ (Gemini general chat; news search)", flush=True)
     ThreadingHTTPServer((HOST, PORT), RoboHandler).serve_forever()
