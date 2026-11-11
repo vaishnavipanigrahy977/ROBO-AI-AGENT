@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f5f7f4">
+    <meta name="description" content="Explore the world with ROBO through interactive, topic-based 3D learning experiences.">
+    <title>ROBO — Your AI learning companion</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <div id="robo-splash-screen" class="robo-splash-screen" aria-live="polite" aria-label="ROBO welcome screen">
+      <div class="robo-splash-mark" aria-hidden="true">R</div>
+      <div class="robo-splash-text">ROBO</div>
+    </div>
+
+    <div class="app-shell">
+      <aside class="sidebar" id="sidebar" aria-label="Main navigation">
+        <a class="brand sidebar-brand" href="#" aria-label="ROBO home">
+          <span class="brand-mark" aria-hidden="true">R</span>
+          <span>ROBO</span>
+        </a>
+        <button class="new-chat-button" id="new-chat" type="button"><span aria-hidden="true">＋</span> New chat</button>
+        <label class="sidebar-search"><span aria-hidden="true">⌕</span><span class="sr-only">Search chat history</span><input id="history-search" type="search" placeholder="Search chats"><kbd>/</kbd></label>
+        <nav class="side-nav" aria-label="Workspace">
+          <button type="button" class="nav-item active" data-view="chat"><span aria-hidden="true">◌</span> Chat</button>
+          <button type="button" class="nav-item" data-view="students"><span aria-hidden="true">♙</span> Students</button>
+          <button type="button" class="nav-item" data-view="scheduled"><span aria-hidden="true">◫</span> Scheduled</button>
+          <button type="button" class="nav-item" data-view="customize"><span aria-hidden="true">✳</span> Customize</button>
+          <button type="button" class="nav-item" data-view="settings"><span aria-hidden="true">⚙</span> Settings</button>
+        </nav>
+        <section class="history-section" aria-labelledby="history-heading">
+          <div class="history-title"><h2 id="history-heading">Recent chats</h2><span id="history-count"></span></div>
+          <div id="chat-history" class="chat-history"></div>
+          <p id="history-empty" class="history-empty">Your conversations will show up here.</p>
+        </section>
+        <div class="sidebar-bottom">
+          <button class="theme-toggle" id="theme-toggle" type="button"><span id="theme-icon" aria-hidden="true">☾</span><span id="theme-label">Dark theme</span><span class="toggle-track"><span></span></span></button>
+          <button class="google-signin" id="google-signin" type="button"><span class="google-g" aria-hidden="true">G</span><span><strong>Sign in</strong><small>Secure sign-in options</small></span><span class="signin-arrow" aria-hidden="true">↗</span></button>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <button class="mobile-menu" id="mobile-menu" type="button" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+          <div class="topbar-center"><span class="online-dot"></span> Public web + encyclopedia search</div>
+          <button class="profile-button" type="button" aria-label="Guest profile"><span>G</span><span class="profile-name">Guest</span></button>
+        </header>
+
+        <section class="chat-view app-view" id="chat-view" aria-labelledby="chat-heading">
+          <div class="chat-content">
+            <div class="dashboard-preview" aria-label="ROBO dashboard preview">
+              <div class="dashboard-hero">
+                <p class="eyebrow">ROBO DASHBOARD</p>
+                <h2>Knowledge, learning, and discovery at a glance</h2>
+                <p>Search current information, jump into immersive student explorations, and keep track of upcoming study goals in one place.</p>
+              </div>
+              <div class="dashboard-grid">
+                <article class="dashboard-tile"><span class="tile-label">Featured topic</span><strong>Freshwater Swamp Ecosystem</strong><small>Wetland habitats</small></article>
+                <article class="dashboard-tile"><span class="tile-label">Live search</span><strong>Wikipedia + News</strong><small>Public sources</small></article>
+                <article class="dashboard-tile"><span class="tile-label">Students</span><strong>20 immersive topics</strong><small>In 6 categories</small></article>
+                <article class="dashboard-tile"><span class="tile-label">Next up</span><strong>Scheduled</strong><small>Study sessions</small></article>
+              </div>
+              <div class="dashboard-actions">
+                <button type="button" class="dashboard-action primary" data-view="students">Open Students</button>
+                <button type="button" class="dashboard-action" data-prompt="Tell me about the Freshwater Swamp Ecosystem">Open featured exploration</button>
+              </div>
+            </div>
+            <div class="chat-welcome">
+              <span class="robo-avatar welcome-avatar" aria-hidden="true">R</span>
+              <p class="eyebrow">SEARCH THE OPEN WEB</p>
+              <h1 id="chat-heading">Hello! How can I help you today?</h1>
+              <p class="chat-intro">Ask a question to search Wikipedia and current news. ROBO will show you the source links.</p>
+              <div class="starter-prompts">
+                <button type="button" data-prompt="Tell me about the Freshwater Swamp Ecosystem"><span>♧</span> Explore the featured swamp</button>
+                <button type="button" data-prompt="Explain the discovery of penicillin"><span>✚</span> How was penicillin discovered?</button>
+                <button type="button" data-prompt="What are dwarf planets?"><span>✧</span> What are dwarf planets?</button>
+              </div>
+            </div>
+            <div class="conversation-messages" id="conversation-messages" aria-live="polite" aria-label="Conversation"></div>
+            <div class="chat-composer-wrap">
+              <form class="workspace-composer" id="workspace-chat-form">
+                <label class="sr-only" for="workspace-chat-input">Message ROBO</label>
+                <textarea id="workspace-chat-input" rows="1" placeholder="Message ROBO..." autocomplete="off"></textarea>
+                <div class="composer-actions"><span>Public-source search, not an all-knowing AI. Check sources for important facts.</span><button type="submit" aria-label="Search public sources" id="send-chat">↑</button></div>
+              </form>
+            </div>
+          </div>
+        </section>
+
+        <section class="students-view app-view" id="students-view" hidden>
+        <div class="utility-card student-profile-panel"><p class="eyebrow">LEARNING SPACE</p><h1>Students</h1><p class="utility-description">Set up a learner profile, then explore topics together.</p>
+          <form id="student-form" class="student-form"><label for="student-name">Student name</label><input id="student-name" type="text" placeholder="Add a student name" maxlength="40" required><button type="submit">Save student profile</button></form>
+          <div class="student-list" id="student-list"></div>
+        </div>
+        <section class="welcome featured-wetland">
+          <div class="welcome-copy">
+            <p class="eyebrow"><span class="sparkle">✳</span> FEATURED EXPLORATION</p>
+            <h1>The Freshwater Swamp Ecosystem</h1>
+            <p class="welcome-subtitle">Step into a living wetland and discover how water, plants, and wildlife connect.</p>
+            <button class="robo-prompt" id="robo-prompt" type="button">
+              <span class="robo-avatar" aria-hidden="true">♧</span>
+              <span><strong>Explore this habitat</strong><small>Four interactive learning stops</small></span>
+              <span class="prompt-arrow" aria-hidden="true">→</span>
+            </button>
+          </div>
+          <div class="welcome-art" aria-hidden="true">
+            <div class="art-orbit orbit-one"></div><div class="art-orbit orbit-two"></div>
+            <div class="art-sun"><span>✳</span></div>
+            <div class="art-planet planet-a"></div><div class="art-planet planet-b"></div>
+            <div class="art-spark spark-a">✦</div><div class="art-spark spark-b">✧</div>
+          </div>
+        </section>
+
+        <section class="explore-section" aria-labelledby="explore-heading">
+          <div class="section-heading">
+            <div><p class="eyebrow muted">LEARN BY EXPLORING</p><h2 id="explore-heading">Immersive explorations</h2></div>
+            <span class="result-count" id="result-count" aria-live="polite"></span>
+          </div>
+          <div class="toolbar">
+            <div class="category-list" id="category-list" role="group" aria-label="Filter explorations by category"></div>
+            <label class="search-box">
+              <span class="search-icon" aria-hidden="true">⌕</span>
+              <span class="sr-only">Search explorations</span>
+              <input id="search-input" type="search" placeholder="Search a topic..." autocomplete="off">
+              <kbd>/</kbd>
+            </label>
+          </div>
+          <div class="card-grid" id="card-grid" aria-live="polite"></div>
+          <div class="empty-state" id="empty-state" hidden><span>◌</span><strong>No explorations found</strong><p>Try another topic or category.</p></div>
+        </section>
+        <footer class="footer"><span>Made for curious minds.</span><span><span class="online-dot"></span> ROBO is ready to explore</span></footer>
+        </section>
+
+        <section class="utility-view app-view" id="scheduled-view" hidden>
+          <div class="utility-card schedule-panel">
+            <div class="utility-header">
+              <div><p class="eyebrow">ROUTINE</p><h1>Scheduled</h1></div>
+              <button id="add-schedule" class="setting-action" type="button">Add a session</button>
+            </div>
+            <p class="utility-description">Plan check-ins, learning prompts, and future ROBO explorations. This demo stores schedules in your browser.</p>
+
+            <div class="schedule-tabs" role="tablist" aria-label="ROBO schedule tools">
+              <button type="button" class="schedule-tab active" data-schedule-tab="timetable" role="tab" aria-selected="true">Timetable</button>
+              <button type="button" class="schedule-tab" data-schedule-tab="clock" role="tab" aria-selected="false">Clock</button>
+              <button type="button" class="schedule-tab" data-schedule-tab="days" role="tab" aria-selected="false">Days</button>
+            </div>
+
+            <div class="schedule-module active" id="schedule-timetable-panel" role="tabpanel">
+              <div class="timetable-head"><span>Weekly timetable</span><strong>11 row planner</strong></div>
+              <div class="timetable-grid" id="timetable-grid" aria-live="polite"></div>
+              <button type="button" id="add-timetable-row" class="add-timetable-row" aria-label="Add a new timetable row">＋ Add row</button>
+            </div>
+
+            <div class="schedule-module" id="schedule-clock-panel" role="tabpanel" hidden>
+              <div class="clock-shell" id="clock-shell">
+                <button type="button" class="clock-card" id="robo-clock-card" aria-expanded="false" aria-controls="clock-tools-panel">
+                  <div class="clock-label">Current time</div>
+                  <div id="robo-clock" class="digital-clock">--:--:--</div>
+                  <div class="clock-subtitle">Local ROBO time</div>
+                </button>
+
+                <div class="clock-tools-panel" id="clock-tools-panel">
+                  <div class="clock-mode-tabs" role="tablist" aria-label="Clock tools">
+                    <button type="button" class="clock-mode active" data-clock-mode="alarm" role="tab" aria-selected="true">Alarm</button>
+                    <button type="button" class="clock-mode" data-clock-mode="stopwatch" role="tab" aria-selected="false">Stopwatch</button>
+                    <button type="button" class="clock-mode" data-clock-mode="timer" role="tab" aria-selected="false">Timer</button>
+                  </div>
+
+                  <div class="clock-section active" id="clock-alarm-panel" role="tabpanel">
+                    <form id="alarm-form" class="alarm-form">
+                      <label>
+                        <span>Set an alarm</span>
+                        <input type="datetime-local" id="alarm-datetime" required>
+                      </label>
+                      <label>
+                        <span>Label</span>
+                        <input type="text" id="alarm-label" maxlength="40" placeholder="Morning review" value="Morning review">
+                      </label>
+                      <button type="submit" class="setting-action primary-action">Set alarm</button>
+                    </form>
+                    <div class="alarm-list" id="alarm-list" aria-live="polite"></div>
+                  </div>
+
+                  <div class="clock-section" id="clock-stopwatch-panel" role="tabpanel" hidden>
+                    <div class="stopwatch-box">
+                      <div id="stopwatch-display" class="stopwatch-display">00:00.00</div>
+                      <div class="stopwatch-actions">
+                        <button type="button" id="start-stopwatch" class="setting-action primary-action">Start</button>
+                        <button type="button" id="pause-stopwatch" class="setting-action">Pause</button>
+                        <button type="button" id="reset-stopwatch" class="setting-action">Reset</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="clock-section" id="clock-timer-panel" role="tabpanel" hidden>
+                    <div class="timer-box">
+                      <label for="timer-input">Minutes</label>
+                      <input id="timer-input" type="number" min="1" max="180" value="15" step="1">
+                      <div class="timer-display" id="timer-display">15:00</div>
+                      <div class="stopwatch-actions">
+                        <button type="button" id="start-timer" class="setting-action primary-action">Start</button>
+                        <button type="button" id="pause-timer" class="setting-action">Pause</button>
+                        <button type="button" id="reset-timer" class="setting-action">Reset</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="schedule-module" id="schedule-days-panel" role="tabpanel" hidden>
+              <div class="calendar-controls">
+                <label>
+                  <span>Month</span>
+                  <select id="calendar-month-select"></select>
+                </label>
+                <label>
+                  <span>Year</span>
+                  <select id="calendar-year-select"></select>
+                </label>
+              </div>
+              <div class="calendar-weekdays" aria-label="Weekdays">
+                <span>Sun</span>
+                <span>Mon</span>
+                <span>Tue</span>
+                <span>Wed</span>
+                <span>Thu</span>
+                <span>Fri</span>
+                <span>Sat</span>
+              </div>
+              <div class="calendar-grid" id="calendar-grid"></div>
+              <div id="day-note-panel" class="day-note-panel" hidden>
+                <label for="day-note-input">What is on <span id="day-note-date">this day</span>?</label>
+                <textarea id="day-note-input" rows="4" placeholder="Write your plans, notes, or reminders for this day..."></textarea>
+                <div class="schedule-form-actions">
+                  <button type="button" id="save-day-note" class="setting-action primary-action">Save day note</button>
+                </div>
+              </div>
+            </div>
+
+            <div id="schedule-form-shell" class="schedule-form-shell" hidden>
+              <form id="schedule-form" class="schedule-form">
+                <label>
+                  <span>Title</span>
+                  <input type="text" id="schedule-title" placeholder="Water cycle review" maxlength="60" required>
+                </label>
+                <label>
+                  <span>Date</span>
+                  <input type="date" id="schedule-date" required>
+                </label>
+                <label>
+                  <span>Time</span>
+                  <input type="time" id="schedule-time" required>
+                </label>
+                <label class="schedule-note-field">
+                  <span>Notes</span>
+                  <textarea id="schedule-notes" rows="2" placeholder="What should ROBO help with?"></textarea>
+                </label>
+                <div class="schedule-form-actions">
+                  <button type="submit" class="setting-action primary-action">Save</button>
+                  <button type="button" class="setting-action secondary-action" id="cancel-schedule">Cancel</button>
+                </div>
+              </form>
+            </div>
+            <div id="schedule-list" class="schedule-list" aria-live="polite"></div>
+            <div id="schedule-empty" class="empty-state schedule-empty">
+              <span>◫</span>
+              <strong>No scheduled sessions yet</strong>
+              <p>Create a quick ROBO study reminder.</p>
+            </div>
+          </div>
+        </section>
+        <section class="utility-view app-view" id="customize-view" hidden>
+          <div class="utility-card"><p class="eyebrow">MAKE ROBO YOURS</p><h1>Customize</h1><p class="utility-description">Choose how ROBO explains things. Your preference is saved on this device.</p>
+            <fieldset class="preference-group"><legend>Explanation style</legend><label><input type="radio" name="response-style" value="simple"> Simple and concise</label><label><input type="radio" name="response-style" value="balanced"> Balanced (recommended)</label><label><input type="radio" name="response-style" value="detailed"> Detailed and curious</label></fieldset>
+          </div>
+        </section>
+        <section class="utility-view app-view" id="settings-view" hidden>
+          <div class="utility-card"><p class="eyebrow">PREFERENCES</p><h1>Settings</h1><p class="utility-description">Control how this ROBO demo looks and stores your work.</p>
+            <div class="setting-row"><span><strong>Appearance</strong><small>Switch between light and dark themes.</small></span><button class="setting-action" id="settings-theme" type="button">Dark theme</button></div>
+            <div class="setting-row"><span><strong>Chat history</strong><small>Conversations are stored in this browser on this device.</small></span><button class="setting-action danger-action" id="clear-history" type="button">Clear history</button></div>
+            <div class="setting-row"><span><strong>Google sign-in</strong><small>Account authentication is not configured in this demo.</small></span><button class="setting-action" id="settings-signin" type="button">Sign-in details</button></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <dialog class="explore-dialog" id="explore-dialog" aria-labelledby="scene-title">
+      <div class="dialog-shell">
+        <header class="dialog-header">
+          <a class="brand compact" href="#" aria-label="ROBO"><span class="brand-mark" aria-hidden="true">R</span><span>ROBO</span></a>
+          <div class="dialog-topic"><span id="scene-category"></span><span class="breadcrumb-divider">/</span><strong id="scene-title"></strong></div>
+          <button class="icon-button close-button" id="close-dialog" type="button" aria-label="Close exploration">×</button>
+        </header>
+        <div class="scene-layout">
+          <section class="scene-column" aria-label="Interactive exploration scene">
+            <div class="scene-topline"><span class="live-label"><span class="online-dot"></span> IMMERSIVE EXPLORATION</span><span class="drag-hint">Drag to look around <span aria-hidden="true">↔</span></span></div>
+            <div class="scene-frame" id="scene-frame" tabindex="0" aria-label="Interactive scene. Select a numbered point to learn about it.">
+              <div class="scene-backdrop" id="scene-backdrop"></div>
+              <div class="scene-art" id="scene-art"></div>
+              <div class="scene-grid-overlay" aria-hidden="true"></div>
+              <div class="scene-pins" id="scene-pins"></div>
+              <div class="scene-caption" id="scene-caption"></div>
+              <div class="scene-controls">
+                <button class="scene-control" id="rotate-scene" type="button" aria-label="Rotate scene" title="Rotate scene">⟳</button>
+                <button class="scene-control" id="flow-scene" type="button" aria-label="Pause scene animation" title="Pause animation">Ⅱ</button>
+                <span class="scene-scale">01 — 04</span>
+              </div>
+            </div>
+            <div class="scene-stepper"><button id="previous-step" type="button" aria-label="Previous point">←</button><div class="step-dots" id="step-dots"></div><button id="next-step" type="button" aria-label="Next point">→</button></div>
+          </section>
+          <aside class="lesson-panel">
+            <p class="eyebrow muted" id="lesson-kicker">LOOK CLOSER</p>
+            <div class="lesson-progress"><span id="lesson-progress-bar"></span></div>
+            <p class="lesson-step" id="lesson-step">01 / 04</p>
+            <h2 id="lesson-title"></h2>
+            <p class="lesson-copy" id="lesson-copy"></p>
+            <div class="robo-note"><span class="robo-avatar small" aria-hidden="true">R</span><p><strong>ROBO says</strong><span id="robo-note-copy"></span></p></div>
+            <div class="lesson-footer"><span><span class="key-icon">⌘</span> Explore at your own pace</span><button id="next-lesson" type="button">Next point <span aria-hidden="true">→</span></button></div>
+          </aside>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog class="signin-dialog" id="signin-dialog" aria-labelledby="signin-title">
+      <div class="signin-dialog-content">
+        <button class="icon-button signin-close" id="close-signin" type="button" aria-label="Close sign-in details">×</button>
+        <div class="signin-header">
+          <span class="google-g signin-large" aria-hidden="true">R</span>
+          <h2 id="signin-title">Sign in to ROBO</h2>
+        </div>
+        <p>Sign in securely with your provider. Your password is entered only on that provider’s website.</p>
+        <div class="signin-provider-list" aria-label="Sign in providers">
+          <button type="button" class="signin-provider" data-provider="google"><span class="provider-mark google-mark" aria-hidden="true">G</span>Google</button>
+          <button type="button" class="signin-provider" data-provider="microsoft"><span class="provider-mark microsoft-mark" aria-hidden="true">M</span>Microsoft</button>
+        </div>
+        <p class="signin-provider-status" id="signin-provider-status" role="status">Checking sign-in availability…</p>
+        <div class="signin-footer">
+          <button type="button" class="signin-link" id="signin-guest">Continue as guest</button>
+          <button type="button" class="signin-link danger" id="signin-signout" hidden>Sign out</button>
+        </div>
+      </div>
+    </dialog>
+
+    <script src="explorations.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

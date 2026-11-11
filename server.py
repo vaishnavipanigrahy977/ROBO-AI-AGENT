@@ -1,0 +1,423 @@
+import json
+import base64
+import hashlib
+import hmac
+import os
+import re
+import secrets
+import time
+import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
+from http.cookies import SimpleCookie
+from datetime import datetime, timezone
+from html.parser import HTMLParser
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlencode
+from urllib.request import Request, urlopen
+
+
+HOST = "0.0.0.0"
+PORT = int(os.environ.get("PORT", os.environ.get("ROBO_PORT", "8765")))
+MAX_BODY_BYTES = 128 * 1024
+MAX_MESSAGES = 40
+MAX_MESSAGE_LENGTH = 8000
+USER_AGENT = "ROBO-Learning-Assistant/1.0 (public-source search demo)"
+SESSION_COOKIE = "robo_session"
+SESSION_MAX_AGE = 60 * 60 * 24 * 7
+SESSION_SECRET = os.environ.get("ROBO_SESSION_SECRET", "").encode() or secrets.token_bytes(32)
+OAUTH_PROVIDERS = {
+    "google": {
+        "client_id_env": "GOOGLE_CLIENT_ID",
+        "client_secret_env": "GOOGLE_CLIENT_SECRET",
+        "authorization_endpoint": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_endpoint": "https://oauth2.googleapis.com/token",
+        "userinfo_endpoint": "https://openidconnect.googleapis.com/v1/userinfo",
+        "scope": "openid email profile",
+    },
+    "microsoft": {
+        "client_id_env": "MICROSOFT_CLIENT_ID",
+        "client_secret_env": "MICROSOFT_CLIENT_SECRET",
+        "authorization_endpoint": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+        "token_endpoint": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+        "userinfo_endpoint": "https://graph.microsoft.com/oidc/userinfo",
+        "scope": "openid profile email",
+    },
+}
+
+
+class MarkupText(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.parts = []
+
+    def handle_data(self, data):
+        if data.strip():
+            self.parts.append(data.strip())
+
+
+def plain_text(markup):
+    parser = MarkupText()
+    parser.feed(markup or "")
+    return re.sub(r"\s+", " ", " ".join(parser.parts)).strip()
+
+
+def fetch_json(url):
+    request = Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
+    with urlopen(request, timeout=12) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def fetch_xml(url):
+    request = Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/rss+xml, application/xml"})
+    with urlopen(request, timeout=12) as response:
+        return ET.fromstring(response.read())
+
+
+def public_origin(handler):
+    configured_url = os.environ.get("ROBO_PUBLIC_URL", "").strip()
+    if configured_url:
+        from urllib.parse import urlsplit
+        parsed = urlsplit(configured_url)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise ValueError("ROBO_PUBLIC_URL must be an absolute http(s) URL.")
+        return f"{parsed.scheme}://{parsed.netloc}"
+    forwarded_proto = handler.headers.get("X-Forwarded-Proto", "").split(",")[0].strip()
+    scheme = forwarded_proto if forwarded_proto in ("http", "https") else "http"
+    host = handler.headers.get("Host", "localhost")
+    return f"{scheme}://{host}"
+
+
+def oauth_provider_config(provider):
+    if not isinstance(provider, str):
+        return None
+    config = OAUTH_PROVIDERS.get(provider)
+    if not config:
+        return None
+    client_id = os.environ.get(config["client_id_env"], "").strip()
+    client_secret = os.environ.get(config["client_secret_env"], "").strip()
+    if not client_id or not client_secret:
+        return None
+    return {
+        **config,
+        "provider": "Google" if provider == "google" else "Microsoft",
+        "client_id": client_id,
+        "client_secret": client_secret,
+    }
+
+
+def encode_session(profile):
+    payload = {**profile, "expiresAt": int(time.time()) + SESSION_MAX_AGE}
+    encoded = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode().rstrip("=")
+    signature = hmac.new(SESSION_SECRET, encoded.encode(), hashlib.sha256).digest()
+    encoded_signature = base64.urlsafe_b64encode(signature).decode().rstrip("=")
+    return f"{encoded}.{encoded_signature}"
+
+
+def decode_session(cookie_value):
+    try:
+        encoded, signature = cookie_value.split(".", 1)
+        expected = base64.urlsafe_b64encode(
+            hmac.new(SESSION_SECRET, encoded.encode(), hashlib.sha256).digest()
+        ).decode().rstrip("=")
+        if not hmac.compare_digest(signature, expected):
+            return None
+        payload = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
+        if not isinstance(payload, dict) or payload.get("expiresAt", 0) <= int(time.time()):
+            return None
+        return payload
+    except (ValueError, json.JSONDecodeError, TypeError):
+        return None
+
+
+def fetch_oauth_token(provider_config, code, verifier, redirect_uri):
+    form = urlencode({
+        "grant_type": "authorization_code",
+        "code": code,
+        "client_id": provider_config["client_id"],
+        "client_secret": provider_config["client_secret"],
+        "redirect_uri": redirect_uri,
+        "code_verifier": verifier,
+    }).encode()
+    request = Request(provider_config["token_endpoint"], data=form, headers={
+        "User-Agent": USER_AGENT,
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "application/json",
+    })
+    with urlopen(request, timeout=15) as response:
+        token_data = json.loads(response.read().decode("utf-8"))
+    if not isinstance(token_data, dict):
+        raise ValueError("The identity provider returned an invalid token response.")
+    access_token = token_data.get("access_token")
+    if not isinstance(access_token, str) or not access_token:
+        raise ValueError("The identity provider did not return an access token.")
+    profile_request = Request(provider_config["userinfo_endpoint"], headers={
+        "User-Agent": USER_AGENT,
+        "Authorization": f"Bearer {access_token}",
+        "Accept": "application/json",
+    })
+    with urlopen(profile_request, timeout=15) as response:
+        identity = json.loads(response.read().decode("utf-8"))
+    if not isinstance(identity, dict):
+        raise ValueError("The identity provider returned an invalid profile.")
+    email = identity.get("email")
+    if not isinstance(email, str) or not email.strip():
+        raise ValueError("The identity provider did not return an email address.")
+    name = identity.get("name") or identity.get("given_name") or email.split("@", 1)[0]
+    return {"signedIn": True, "provider": provider_config["provider"], "displayName": str(name), "email": email}
+
+
+def search_wikipedia(query, limit=3):
+    endpoint = "https://en.wikipedia.org/w/api.php?" + urlencode({
+        "action": "query",
+        "list": "search",
+        "srsearch": query,
+        "format": "json",
+        "srlimit": limit,
+        "utf8": 1,
+    })
+    result = fetch_json(endpoint)
+    pages = result.get("query", {}).get("search", [])
+    matches = []
+    for page in pages[:limit]:
+        title = page.get("title")
+        page_id = page.get("pageid")
+        if not title or not isinstance(page_id, int):
+            continue
+        summary_url = "https://en.wikipedia.org/api/rest_v1/page/summary/" + quote(title.replace(" ", "_"))
+        try:
+            summary = fetch_json(summary_url)
+            extract = re.sub(r"\s+", " ", summary.get("extract", "")).strip()
+        except (HTTPError, URLError, TimeoutError, ValueError, UnicodeDecodeError):
+            extract = plain_text(page.get("snippet", ""))
+        if not extract:
+            extract = plain_text(page.get("snippet", ""))
+        if not extract:
+            continue
+        matches.append({
+            "title": title,
+            "text": extract[:1200],
+            "url": f"https://en.wikipedia.org/?curid={page_id}",
+            "publisher": "Wikipedia",
+        })
+    return matches
+
+
+def search_news(query, limit=5):
+    url = "https://news.google.com/rss/search?" + urlencode({
+        "q": query,
+        "hl": "en-US",
+        "gl": "US",
+        "ceid": "US:en",
+    })
+    root = fetch_xml(url)
+    items = []
+    for item in root.findall("./channel/item")[:limit]:
+        title = (item.findtext("title") or "").strip()
+        link = (item.findtext("link") or "").strip()
+        description = plain_text(item.findtext("description") or "")
+        source_element = item.find("source")
+        publisher = (source_element.text or "").strip() if source_element is not None else ""
+        pub_date = (item.findtext("pubDate") or "").strip()
+        if title and link.startswith("https://"):
+            items.append({
+                "title": title,
+                "text": description[:500],
+                "url": link,
+                "publisher": publisher or "Google News",
+                "publishedAt": pub_date,
+            })
+    return items
+
+
+def search_sources(query):
+    query = re.sub(r"\s+", " ", query).strip()[:300]
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        wiki_future = executor.submit(search_wikipedia, query)
+        news_future = executor.submit(search_news, query)
+        results = {"encyclopedia": [], "news": [], "sourceErrors": []}
+        for name, future, key in (
+            ("Wikipedia", wiki_future, "encyclopedia"),
+            ("Google News", news_future, "news"),
+        ):
+            try:
+                results[key] = future.result()
+            except (HTTPError, URLError, TimeoutError, ValueError, UnicodeDecodeError, ET.ParseError) as error:
+                print(f"{name} search failed: {error}", flush=True)
+                results["sourceErrors"].append(name)
+
+    if not results["encyclopedia"] and not results["news"]:
+        raise RuntimeError("The public search sources are temporarily unavailable. Please try again.")
+
+    sections = []
+    if results["encyclopedia"]:
+        sections.append("Here are encyclopedia matches for your question:")
+        for item in results["encyclopedia"]:
+            sections.append(f"{item['title']}\n{item['text']}")
+    if results["news"]:
+        sections.append("Recent news matches:")
+        for item in results["news"]:
+            date = f" ({item['publishedAt']})" if item.get("publishedAt") else ""
+            publisher = f" — {item['publisher']}" if item.get("publisher") else ""
+            summary = f"\n{item['text']}" if item["text"] else ""
+            sections.append(f"{item['title']}{publisher}{date}{summary}")
+
+    warning = ""
+    if results["sourceErrors"]:
+        warning = "\n\nSome sources could not be reached: " + ", ".join(results["sourceErrors"]) + "."
+    if not results["encyclopedia"] and results["news"]:
+        opening = "I couldn't find an encyclopedia match, but here are current news results."
+    elif not results["news"] and results["encyclopedia"]:
+        opening = "Current news search is temporarily unavailable; here are encyclopedia results."
+    else:
+        opening = ""
+    text = "\n\n".join(sections)
+    if opening:
+        text = opening + "\n\n" + text
+    text += warning
+    sources = []
+    for item in results["encyclopedia"] + results["news"]:
+        sources.append({key: item[key] for key in ("title", "url", "publisher", "publishedAt") if item.get(key)})
+    return {"text": text, "sources": sources, "searchedAt": datetime.now(timezone.utc).isoformat()}
+
+
+class RoboHandler(SimpleHTTPRequestHandler):
+    def send_json(self, status, payload, headers=None):
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        if self.path == "/api/health":
+            self.send_json(200, {"ok": True, "mode": "public-source-search", "apiKeyRequired": False})
+            return
+        if self.path == "/api/auth/config":
+            origin = public_origin(self)
+            self.send_json(200, {
+                "providers": {
+                    name: {
+                        "configured": bool(oauth_provider_config(name)),
+                        "clientId": os.environ.get(config["client_id_env"], "").strip() if oauth_provider_config(name) else "",
+                        "authorizationEndpoint": config["authorization_endpoint"],
+                        "scope": config["scope"],
+                    }
+                    for name, config in OAUTH_PROVIDERS.items()
+                },
+                "redirectUri": origin + "/",
+            })
+            return
+        if self.path == "/api/auth/session":
+            cookies = SimpleCookie(self.headers.get("Cookie", ""))
+            morsel = cookies.get(SESSION_COOKIE)
+            profile = decode_session(morsel.value) if morsel else None
+            if not profile:
+                self.send_json(200, {"signedIn": False})
+                return
+            profile.pop("expiresAt", None)
+            self.send_json(200, profile)
+            return
+        super().do_GET()
+
+    def do_POST(self):
+        if self.path == "/api/auth/logout":
+            origin = public_origin(self)
+            if self.headers.get("Origin") != origin:
+                self.send_json(403, {"error": "Sign-out request origin did not match this app."})
+                return
+            cookie = f"{SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
+            if origin.startswith("https://"):
+                cookie += "; Secure"
+            self.send_json(200, {"signedIn": False}, {"Set-Cookie": cookie})
+            return
+        if self.path == "/api/auth/exchange":
+            self.handle_oauth_exchange()
+            return
+        if self.path != "/api/chat":
+            self.send_json(404, {"error": "Not found."})
+            return
+
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            if content_length <= 0 or content_length > MAX_BODY_BYTES:
+                self.send_json(413, {"error": "Message is empty or too large."})
+                return
+            payload = json.loads(self.rfile.read(content_length).decode("utf-8"))
+            if not isinstance(payload, dict):
+                self.send_json(400, {"error": "The request body must be a JSON object."})
+                return
+            messages = payload.get("messages")
+            if not isinstance(messages, list) or not messages:
+                self.send_json(400, {"error": "Send at least one message to ROBO."})
+                return
+            validated = []
+            total_text_length = 0
+            for message in messages[-MAX_MESSAGES:]:
+                if not isinstance(message, dict) or message.get("role") not in ("user", "assistant"):
+                    self.send_json(400, {"error": "The conversation has an invalid message."})
+                    return
+                text = message.get("text")
+                if not isinstance(text, str) or not text.strip() or len(text) > MAX_MESSAGE_LENGTH:
+                    self.send_json(400, {"error": "Messages must contain text and be under 8,000 characters."})
+                    return
+                total_text_length += len(text)
+                if total_text_length > 60_000:
+                    self.send_json(413, {"error": "This conversation is too long to search. Start a new chat and try again."})
+                    return
+                validated.append({"role": message["role"], "text": text.strip()})
+            query = next((message["text"] for message in reversed(validated) if message["role"] == "user"), None)
+            if not query:
+                self.send_json(400, {"error": "Add a question before sending."})
+                return
+            self.send_json(200, search_sources(query))
+        except (ValueError, UnicodeDecodeError):
+            self.send_json(400, {"error": "The request body must be valid JSON."})
+        except RuntimeError as error:
+            self.send_json(502, {"error": str(error)})
+
+    def handle_oauth_exchange(self):
+        try:
+            origin = public_origin(self)
+            if self.headers.get("Origin") != origin:
+                self.send_json(403, {"error": "Sign-in request origin did not match this app."})
+                return
+            content_length = int(self.headers.get("Content-Length", "0"))
+            if content_length <= 0 or content_length > 16_384:
+                self.send_json(400, {"error": "The sign-in response is missing or too large."})
+                return
+            payload = json.loads(self.rfile.read(content_length).decode("utf-8"))
+            if not isinstance(payload, dict):
+                self.send_json(400, {"error": "The sign-in response is invalid."})
+                return
+            provider = payload.get("provider")
+            code = payload.get("code")
+            verifier = payload.get("codeVerifier")
+            redirect_uri = payload.get("redirectUri")
+            provider_config = oauth_provider_config(provider)
+            if not provider_config:
+                self.send_json(503, {"error": "This sign-in provider is not configured on the ROBO server."})
+                return
+            if not isinstance(code, str) or not code or not isinstance(verifier, str) or not re.fullmatch(r"[A-Za-z0-9._~-]{43,128}", verifier):
+                self.send_json(400, {"error": "The sign-in response is invalid or expired. Please try again."})
+                return
+            if redirect_uri != origin + "/":
+                self.send_json(400, {"error": "The sign-in redirect URI does not match this app."})
+                return
+            profile = fetch_oauth_token(provider_config, code, verifier, redirect_uri)
+            cookie = f"{SESSION_COOKIE}={encode_session(profile)}; Path=/; HttpOnly; SameSite=Lax; Max-Age={SESSION_MAX_AGE}"
+            if origin.startswith("https://"):
+                cookie += "; Secure"
+            self.send_json(200, profile, {"Set-Cookie": cookie})
+        except (ValueError, UnicodeDecodeError, HTTPError, URLError, TimeoutError) as error:
+            print(f"OAuth sign-in failed: {error}", flush=True)
+            self.send_json(502, {"error": "The identity provider could not complete sign-in. Check OAuth setup and try again."})
+
+
+if __name__ == "__main__":
+    print(f"ROBO is running at http://{HOST}:{PORT}/ (public-source search; no API key required)", flush=True)
+    ThreadingHTTPServer((HOST, PORT), RoboHandler).serve_forever()
