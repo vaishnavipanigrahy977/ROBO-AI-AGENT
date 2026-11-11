@@ -191,6 +191,10 @@ h2 { font-size: 24px; line-height: 1.25; margin: 5px 0 0; font-weight: 700; }
 .user-message .message-text { max-width: min(85%, 510px); padding: 11px 15px; border-radius: 17px 17px 4px 17px; background: var(--mint); color: var(--ink); }
 .assistant-message .message-text { padding-top: 3px; }
 .chat-launch { width: fit-content; grid-column: 2; }
+.generated-artwork { grid-column: 2; width: min(100%, 520px); margin-top: 10px; overflow: hidden; border: 1px solid var(--line); border-radius: 15px; background: var(--white); box-shadow: 0 8px 26px #18372a12; }
+.generated-artwork img { display: block; width: 100%; aspect-ratio: 16 / 11; object-fit: cover; }
+.artwork-download { display: block; margin: 0 12px 12px auto; padding: 7px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--white); color: var(--green-dark); font-size: 10px; font-weight: 700; cursor: pointer; }
+.artwork-download:hover { border-color: #aec4b1; background: var(--paper); }
 .chat-composer-wrap { width: min(100%, 760px); margin: 0 auto; }
 .workspace-composer { padding: 10px 13px 9px; border: 1px solid #dfe6df; border-radius: 17px; background: var(--white); box-shadow: 0 7px 25px #223a2910; }
 .workspace-composer:focus-within { border-color: #aec5b1; box-shadow: 0 7px 25px #223a2914, 0 0 0 2px #c5dccb55; }
