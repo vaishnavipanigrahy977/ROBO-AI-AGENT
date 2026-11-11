@@ -298,11 +298,19 @@ function findExploration(message) {
 function getImagePrompt(message) {
   if (!/\b(?:image|picture|illustration|drawing|artwork|art)\b/i.test(message) &&
       !/^\s*(?:please\s+)?(?:draw|illustrate)\b/i.test(message)) return null;
-  return message
+  if (/^\s*(?:can|could|would)\s+you\b/i.test(message) &&
+      /\b(?:as i describe|from my description|as i tell you)\b/i.test(message) &&
+      !/\b(?:of|with|wearing|showing|depicting|featuring)\b/i.test(message)) return null;
+  const prompt = message
+    .replace(/^\s*(?:can|could|would)\s+you\s+(?:please\s+)?/i, "")
     .replace(/^\s*(?:please\s+)?(?:create|make|draw|generate|illustrate)\s+(?:me\s+)?/i, "")
     .replace(/^(?:an?\s+)?(?:image|picture|illustration|drawing|artwork|art)\s+(?:of\s+)?/i, "")
+    .replace(/^(?:for me\s+)?(?:as|while)\s+i\s+(?:describe|explain|tell you)\b.*$/i, "")
+    .replace(/^(?:for me|please|now|of|for)\s+/i, "")
     .replace(/^of\s+/i, "")
     .trim();
+  if (!prompt || /^(?:for me|as i describe it|as i describe|whatever i describe)$/i.test(prompt)) return null;
+  return prompt;
 }
 
 function vectorIllustration(prompt) {
@@ -419,6 +427,13 @@ async function createIllustration(conversation, prompt) {
         imagePrompt: prompt,
         imageSvg
       });
+    } else if (response.status === 429) {
+      conversation.messages.push({
+        role: "assistant",
+        text: "Gemini temporarily rejected this request because its image quota or rate limit was reached. I can’t bypass Google’s limit, but here’s a local vector preview while you check your project’s AI Studio rate limits.",
+        imagePrompt: prompt,
+        imageSvg: vectorIllustration(prompt)
+      });
     } else {
       if (!response.ok) throw new Error(result.error || `Gemini image generation returned HTTP ${response.status}.`);
       if (typeof result.data !== "string" || !["image/png", "image/jpeg", "image/webp"].includes(result.mimeType)) {
@@ -520,6 +535,17 @@ async function sendMessage(text) {
   const imagePrompt = getImagePrompt(value);
   if (imagePrompt) {
     createIllustration(conversation, imagePrompt);
+    return;
+  }
+  if (/\b(?:create|make|generate|draw)\b/i.test(value) && /\b(?:image|picture|illustration|drawing|artwork|art)\b/i.test(value) &&
+      /\b(?:as i describe|as i tell you|for me)\b/i.test(value) && !/\b(?:of|with|wearing|showing|depicting|featuring)\b/i.test(value)) {
+    conversation.messages.push({
+      role: "assistant",
+      text: "Yes—describe the subject and details you want in the image, and I’ll create it."
+    });
+    conversation.updatedAt = Date.now();
+    renderConversation();
+    saveConversations();
     return;
   }
   if (/^(hi|hello|hey|hiya|good morning|good afternoon|good evening)[!.?,\s]*$/i.test(value)) {

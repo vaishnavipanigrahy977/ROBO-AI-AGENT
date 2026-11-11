@@ -159,6 +159,20 @@ class ServerEndpointTests(unittest.TestCase):
         result = json.loads(response.read())
         self.assertFalse(result["configured"])
 
+    def test_image_generation_reports_quota_limit_without_leaking_provider_details(self):
+        quota_error = HTTPError(
+            "https://generativelanguage.googleapis.com", 429, "Rate limited", {}, None
+        )
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "server-only-secret"}), patch(
+            "server.generate_gemini_image", side_effect=quota_error
+        ):
+            response = self.post_image({"prompt": "A red fox with a red hat"})
+
+        self.assertEqual(response.code, 429)
+        result = json.loads(response.read())
+        self.assertIn("quota", result["error"].lower())
+        self.assertNotIn("server-only-secret", json.dumps(result))
+
     def test_image_generation_rejects_violent_prompts_before_calling_provider(self):
         with patch.dict("os.environ", {"GEMINI_API_KEY": "server-only-secret"}), patch(
             "server.generate_gemini_image"
