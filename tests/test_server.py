@@ -1,3 +1,5 @@
+import base64
+import io
 import json
 import threading
 import unittest
@@ -110,6 +112,18 @@ class ServerEndpointTests(unittest.TestCase):
         except HTTPError as error:
             return error
 
+    def post_image(self, payload):
+        request = Request(
+            self.base_url + "/api/image",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            return urlopen(request, timeout=3)
+        except HTTPError as error:
+            return error
+
     def test_health_reports_no_api_key_requirement(self):
         response = urlopen(self.base_url + "/api/health", timeout=3)
         health = json.loads(response.read())
@@ -117,6 +131,75 @@ class ServerEndpointTests(unittest.TestCase):
         self.assertTrue(health["ok"])
         self.assertEqual(health["mode"], "public-source-search")
         self.assertFalse(health["apiKeyRequired"])
+
+    def test_image_config_does_not_expose_api_key(self):
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "server-only-secret"}):
+            response = urlopen(self.base_url + "/api/image/config", timeout=3)
+            body = response.read().decode()
+
+        self.assertEqual(json.loads(body), {"configured": True})
+        self.assertNotIn("server-only-secret", body)
+
+    def test_image_generation_uses_gemini_and_returns_image_data(self):
+        generated = {"data": base64.b64encode(b"image-bytes").decode(), "mimeType": "image/png"}
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "server-only-secret"}), patch(
+            "server.generate_gemini_image", return_value=generated
+        ) as generate:
+            response = self.post_image({"prompt": "A village with two huts"})
+
+        self.assertEqual(response.code, 200)
+        self.assertEqual(json.loads(response.read()), generated)
+        generate.assert_called_once_with("A village with two huts")
+
+    def test_image_generation_uses_local_fallback_when_api_key_is_missing(self):
+        with patch.dict("os.environ", {}, clear=True):
+            response = self.post_image({"prompt": "A red fox"})
+
+        self.assertEqual(response.code, 503)
+        result = json.loads(response.read())
+        self.assertFalse(result["configured"])
+
+    def test_image_generation_rejects_violent_prompts_before_calling_provider(self):
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "server-only-secret"}), patch(
+            "server.generate_gemini_image"
+        ) as generate:
+            response = self.post_image({"prompt": "A graphic bloody fight"})
+
+        self.assertEqual(response.code, 400)
+        self.assertIn("violence", json.loads(response.read())["error"])
+        generate.assert_not_called()
+
+    def test_gemini_request_keeps_key_in_header_and_validates_image_response(self):
+        response_body = json.dumps({
+            "output_image": {
+                "data": base64.b64encode(b"image-bytes").decode(),
+                "mime_type": "image/webp",
+            }
+        }).encode()
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return response_body
+
+        fake_response = FakeResponse()
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "server-only-secret"}), patch(
+            "server.urlopen", return_value=fake_response
+        ) as open_url:
+            result = server.generate_gemini_image("A red fox in a garden")
+
+        request = open_url.call_args.args[0]
+        self.assertEqual(request.full_url, "https://generativelanguage.googleapis.com/v1beta/interactions")
+        self.assertEqual(request.get_header("X-goog-api-key"), "server-only-secret")
+        self.assertEqual(request.get_header("Api-revision"), "2026-05-20")
+        self.assertEqual(json.loads(request.data)["model"], "gemini-nano-banana-2.1")
+        self.assertEqual(result["mimeType"], "image/webp")
+        self.assertEqual(base64.b64decode(result["data"]), b"image-bytes")
 
     def test_auth_config_disables_unconfigured_providers(self):
         response = urlopen(self.base_url + "/api/auth/config", timeout=3)

@@ -5,6 +5,7 @@ import hmac
 import os
 import re
 import secrets
+import threading
 import time
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
@@ -22,10 +23,21 @@ PORT = int(os.environ.get("PORT", os.environ.get("ROBO_PORT", "8765")))
 MAX_BODY_BYTES = 128 * 1024
 MAX_MESSAGES = 40
 MAX_MESSAGE_LENGTH = 8000
+MAX_IMAGE_PROMPT_LENGTH = 2000
+MAX_GENERATED_IMAGE_BYTES = 12 * 1024 * 1024
+IMAGE_REQUEST_LIMIT = 5
+IMAGE_REQUEST_WINDOW = 60
 USER_AGENT = "ROBO-Learning-Assistant/1.0 (public-source search demo)"
 SESSION_COOKIE = "robo_session"
 SESSION_MAX_AGE = 60 * 60 * 24 * 7
 SESSION_SECRET = os.environ.get("ROBO_SESSION_SECRET", "").encode() or secrets.token_bytes(32)
+VIOLENT_IMAGE_PROMPT = re.compile(
+    r"\b(?:violent|violence|kill|murder|blood|gore|attack|assault|bombing|explosion|"
+    r"stabbing|shooting|warfare|battlefield|torture|beating|fight|wound|wounded|corpse|massacre)\b",
+    re.IGNORECASE,
+)
+IMAGE_REQUESTS = {}
+IMAGE_REQUESTS_LOCK = threading.Lock()
 OAUTH_PROVIDERS = {
     "google": {
         "client_id_env": "GOOGLE_CLIENT_ID",
@@ -72,6 +84,57 @@ def fetch_xml(url):
     request = Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/rss+xml, application/xml"})
     with urlopen(request, timeout=12) as response:
         return ET.fromstring(response.read())
+
+
+def generate_gemini_image(prompt):
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("Gemini image generation is not configured.")
+    body = json.dumps({
+        "model": "gemini-nano-banana-2.1",
+        "input": [{"type": "text", "text": prompt}],
+    }).encode("utf-8")
+    request = Request(
+        "https://generativelanguage.googleapis.com/v1beta/interactions",
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "x-goog-api-key": api_key,
+            "Api-Revision": "2026-05-20",
+        },
+        method="POST",
+    )
+    with urlopen(request, timeout=60) as response:
+        result = json.loads(response.read().decode("utf-8"))
+    image = result.get("output_image") if isinstance(result, dict) else None
+    if not isinstance(image, dict):
+        raise RuntimeError("Gemini did not return an image.")
+    data = image.get("data")
+    mime_type = image.get("mime_type", "image/png")
+    if not isinstance(data, str) or not re.fullmatch(r"[A-Za-z0-9+/]+={0,2}", data):
+        raise RuntimeError("Gemini returned invalid image data.")
+    if mime_type not in ("image/png", "image/jpeg", "image/webp"):
+        raise RuntimeError("Gemini returned an unsupported image format.")
+    image_bytes = base64.b64decode(data, validate=True)
+    if not image_bytes or len(image_bytes) > MAX_GENERATED_IMAGE_BYTES:
+        raise RuntimeError("Gemini returned an empty or oversized image.")
+    return {"data": data, "mimeType": mime_type}
+
+
+def allow_image_request(client_address):
+    now = time.monotonic()
+    with IMAGE_REQUESTS_LOCK:
+        recent = [timestamp for timestamp in IMAGE_REQUESTS.get(client_address, []) if now - timestamp < IMAGE_REQUEST_WINDOW]
+        if len(recent) >= IMAGE_REQUEST_LIMIT:
+            IMAGE_REQUESTS[client_address] = recent
+            return False
+        recent.append(now)
+        IMAGE_REQUESTS[client_address] = recent
+        for address, timestamps in list(IMAGE_REQUESTS.items()):
+            if not any(now - timestamp < IMAGE_REQUEST_WINDOW for timestamp in timestamps):
+                IMAGE_REQUESTS.pop(address, None)
+    return True
 
 
 def public_origin(handler):
@@ -297,6 +360,9 @@ class RoboHandler(SimpleHTTPRequestHandler):
         if self.path == "/api/health":
             self.send_json(200, {"ok": True, "mode": "public-source-search", "apiKeyRequired": False})
             return
+        if self.path == "/api/image/config":
+            self.send_json(200, {"configured": bool(os.environ.get("GEMINI_API_KEY", "").strip())})
+            return
         if self.path == "/api/auth/config":
             origin = public_origin(self)
             self.send_json(200, {
@@ -337,6 +403,9 @@ class RoboHandler(SimpleHTTPRequestHandler):
             return
         if self.path == "/api/auth/exchange":
             self.handle_oauth_exchange()
+            return
+        if self.path == "/api/image":
+            self.handle_image_generation()
             return
         if self.path != "/api/chat":
             self.send_json(404, {"error": "Not found."})
@@ -379,6 +448,53 @@ class RoboHandler(SimpleHTTPRequestHandler):
             self.send_json(400, {"error": "The request body must be valid JSON."})
         except RuntimeError as error:
             self.send_json(502, {"error": str(error)})
+
+    def handle_image_generation(self):
+        content_length = self.headers.get("Content-Length", "0")
+        try:
+            content_length = int(content_length)
+        except ValueError:
+            self.send_json(400, {"error": "The image request size is invalid."})
+            return
+        if content_length <= 0 or content_length > 16_384:
+            self.send_json(413, {"error": "The image prompt is empty or too large."})
+            return
+        try:
+            payload = json.loads(self.rfile.read(content_length).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            self.send_json(400, {"error": "The image request must be valid JSON."})
+            return
+        if not isinstance(payload, dict):
+            self.send_json(400, {"error": "The image request must be a JSON object."})
+            return
+        prompt = payload.get("prompt")
+        if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > MAX_IMAGE_PROMPT_LENGTH:
+            self.send_json(400, {"error": "Enter an image description under 2,000 characters."})
+            return
+        prompt = prompt.strip()
+        if VIOLENT_IMAGE_PROMPT.search(prompt):
+            self.send_json(400, {"error": "I can’t create illustrations depicting violence. Try a peaceful, non-violent description instead."})
+            return
+        if not os.environ.get("GEMINI_API_KEY", "").strip():
+            self.send_json(503, {"configured": False, "error": "Gemini image generation is not configured on this server."})
+            return
+        if not allow_image_request(self.client_address[0]):
+            self.send_json(429, {"error": "Too many image requests. Please wait a minute and try again."})
+            return
+        try:
+            image = generate_gemini_image(prompt)
+            self.send_json(200, image)
+        except HTTPError as error:
+            if error.code == 429:
+                self.send_json(429, {"error": "Gemini's image-generation quota is currently unavailable. Check your Google AI Studio limits and try again later."})
+            elif error.code in (401, 403):
+                self.send_json(502, {"error": "Gemini rejected the server API key or image model access. Check the server's Gemini API configuration."})
+            else:
+                self.send_json(502, {"error": "Gemini image generation failed. Please try again later."})
+        except (URLError, TimeoutError):
+            self.send_json(502, {"error": "ROBO could not reach Gemini image generation. Please try again."})
+        except (RuntimeError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
+            self.send_json(502, {"error": "Gemini returned an invalid image response. Please try again."})
 
     def handle_oauth_exchange(self):
         try:
