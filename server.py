@@ -636,7 +636,15 @@ class RoboHandler(SimpleHTTPRequestHandler):
                 return
 
             if api_configured:
-                self.send_json(200, {"text": generate_gemini_answer(validated, payload.get("responseStyle")), "sources": []})
+                try:
+                    answer = generate_gemini_answer(validated, payload.get("responseStyle"))
+                except RuntimeError as error:
+                    print(f"Gemini answer failed; using Wikipedia fallback: {error}", flush=True)
+                    result = answer_from_wikipedia(query)
+                    result["text"] = "ROBO's AI is temporarily unavailable, so here's a reference-based answer instead.\n\n" + result["text"]
+                    self.send_json(200, result)
+                else:
+                    self.send_json(200, {"text": answer, "sources": []})
                 return
 
             self.send_json(200, answer_from_wikipedia(query))

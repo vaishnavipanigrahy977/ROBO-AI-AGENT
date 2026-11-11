@@ -365,6 +365,29 @@ class ServerEndpointTests(unittest.TestCase):
         wikipedia.assert_called_once_with("What is Navaratri?", limit=3)
         news.assert_not_called()
 
+    def test_chat_endpoint_falls_back_to_wikipedia_when_gemini_rejects_configuration(self):
+        article = {
+            "title": "Navaratri",
+            "text": "Navaratri is a Hindu festival celebrated over nine nights.",
+            "url": "https://en.wikipedia.org/?curid=42",
+            "publisher": "Wikipedia",
+        }
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "configured-key"}), \
+                patch("server.generate_gemini_answer", side_effect=RuntimeError(
+                    "ROBO's AI service rejected its server configuration."
+                )), \
+                patch("server.search_news") as news, \
+                patch("server.search_wikipedia", return_value=[article]) as wikipedia:
+            response = self.post_chat({"messages": [{"role": "user", "text": "Navaratri"}]})
+
+        result = json.loads(response.read())
+        self.assertEqual(response.code, 200)
+        self.assertIn("reference-based answer", result["text"])
+        self.assertIn("Navaratri is a Hindu festival", result["text"])
+        self.assertEqual(result["sources"][0]["url"], article["url"])
+        wikipedia.assert_called_once_with("Navaratri", limit=3)
+        news.assert_not_called()
+
     def test_chat_endpoint_returns_wikipedia_search_link_when_no_article_matches(self):
         with patch.dict("os.environ", {"GEMINI_API_KEY": ""}), \
                 patch("server.search_news") as news, \
