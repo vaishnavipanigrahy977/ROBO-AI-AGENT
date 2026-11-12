@@ -7,13 +7,13 @@ on:
 jobs:
   # STAGE 1: BUILD
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
@@ -21,7 +21,7 @@ jobs:
         run: python -m py_compile server.py
 
       - name: Package application files
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: robo-app-bundle
           path: |
@@ -37,13 +37,13 @@ jobs:
   # STAGE 2: TEST (Runs only if Build succeeds)
   test:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
@@ -57,33 +57,33 @@ jobs:
   # STAGE 3: STAGE (Runs only if Test succeeds)
   deploy-stage:
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: staging
     steps:
       - name: Download build artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: robo-app-bundle
 
       - name: Trigger Staging Deployment
         run: |
           echo "Deploying to Staging environment..."
-          # Replace with your Railway/Render staging deploy hook or CLI command:
+          # Uncomment the line below once you add STAGE_DEPLOY_HOOK in GitHub Secrets:
           # curl -X POST ${{ secrets.STAGE_DEPLOY_HOOK }}
 
   # STAGE 4: PRODUCTION (Pauses for manual approval after Stage succeeds)
   deploy-prod:
     needs: deploy-stage
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: production
     steps:
       - name: Download build artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: robo-app-bundle
 
       - name: Trigger Production Deployment
         run: |
           echo "Deploying to Production environment..."
-          # Replace with your Railway/Render production deploy hook or CLI command:
+          # Uncomment the line below once you add PROD_DEPLOY_HOOK in GitHub Secrets:
           # curl -X POST ${{ secrets.PROD_DEPLOY_HOOK }}
