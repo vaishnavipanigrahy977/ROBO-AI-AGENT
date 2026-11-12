@@ -21,7 +21,7 @@ jobs:
         run: python -m py_compile server.py
 
       - name: Package application files
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: robo-app-bundle
           path: |
@@ -61,7 +61,7 @@ jobs:
     environment: staging
     steps:
       - name: Download build artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: robo-app-bundle
 
@@ -78,7 +78,7 @@ jobs:
     environment: production
     steps:
       - name: Download build artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: robo-app-bundle
 
