@@ -1049,6 +1049,38 @@ def calculate_arithmetic(query):
     return {"text": formatted, "sources": []}
 
 
+def hello_world_code_example(query):
+    if not is_coding_request(query) or not re.search(r"\bhello[\s-]+world\b", query, re.IGNORECASE):
+        return None
+    examples = [
+        (r"\bpython\b|\bpy\b", "python", 'print("Hello World")'),
+        (r"\bjavascript\b|\bjs\b", "javascript", 'console.log("Hello World");'),
+        (r"\btypescript\b|\bts\b", "typescript", 'console.log("Hello World");'),
+        (r"\bjava\b", "java", 'public class Main {\n    public static void main(String[] args) {\n        System.out.println("Hello World");\n    }\n}'),
+        (r"(?<!\w)c\+\+(?!\w)|\bcpp\b", "cpp", '#include <iostream>\n\nint main() {\n    std::cout << "Hello World\\n";\n    return 0;\n}'),
+        (r"(?<![\w+#])c(?![\w+#])", "c", '#include <stdio.h>\n\nint main(void) {\n    printf("Hello World\\n");\n    return 0;\n}'),
+        (r"(?<!\w)c#(?!\w)|\bcsharp\b", "csharp", 'Console.WriteLine("Hello World");'),
+        (r"\bgo\b|\bgolang\b", "go", 'package main\n\nimport "fmt"\n\nfunc main() {\n    fmt.Println("Hello World")\n}'),
+        (r"\brust\b", "rust", 'fn main() {\n    println!("Hello World");\n}'),
+        (r"\bruby\b", "ruby", 'puts "Hello World"'),
+        (r"\bphp\b", "php", '<?php\necho "Hello World";'),
+        (r"\bswift\b", "swift", 'print("Hello World")'),
+        (r"\bkotlin\b", "kotlin", 'fun main() {\n    println("Hello World")\n}'),
+        (r"\b(?:bash|shell)\b", "bash", 'echo "Hello World"'),
+    ]
+    for pattern, language, code in examples:
+        if re.search(pattern, query, re.IGNORECASE):
+            return {"language": language, "code": code, "searchQuery": f"Hello World example {language} code"}
+    return {"language": "python", "code": 'print("Hello World")', "searchQuery": "Hello World Python code example"}
+
+
+def format_code_example(example):
+    return (
+        f"Here is a minimal {example['language']} program that prints Hello World:\n\n"
+        f"```{example['language']}\n{example['code']}\n```"
+    )
+
+
 def is_current_news_request(query):
     query = query.lower()
     if re.search(r"\b(?:latest|today|current|breaking|recent|updates?|happening now|daily|tonight|this morning)\b", query) and re.search(
@@ -1361,16 +1393,13 @@ class RoboHandler(SimpleHTTPRequestHandler):
                 return
             if is_explicit_sexual_request(query) or is_sensitive_action_request(query):
                 self.send_json(200, {
-                    "text": "I cannot generate these types of content.",
+                    "text": "Sorry, I can't generate this type of content.",
                     "sources": [],
                 })
                 return
             attachments = validate_attachments(payload.get("attachments", []))
             api_configured = bool(os.environ.get("GEMINI_API_KEY", "").strip())
             arithmetic = calculate_arithmetic(query)
-            if arithmetic is not None and not attachments:
-                self.send_json(200, arithmetic)
-                return
 
             news_request = is_current_news_request(query)
             if attachments:
@@ -1431,6 +1460,27 @@ class RoboHandler(SimpleHTTPRequestHandler):
                     ))
                 return
 
+            code_example = hello_world_code_example(query)
+            recent_questions = [message["text"] for message in validated if message["role"] == "user"][-3:]
+            search_query = code_example["searchQuery"] if code_example else " ".join(recent_questions)
+            try:
+                search_result = search_sources(search_query, include_news=False)
+            except RuntimeError:
+                if arithmetic is not None:
+                    self.send_json(200, arithmetic)
+                    return
+                if not code_example:
+                    raise
+                print("Web search failed; returning the built-in Hello World example.", flush=True)
+                answer = {
+                    "text": format_code_example(code_example),
+                    "sources": [],
+                }
+                self.send_json(200, add_language_fallback_notice(answer, response_language))
+                return
+            if arithmetic is not None:
+                self.send_json(200, arithmetic)
+                return
             if is_robo_identity_query(query) and response_language == "en":
                 self.send_json(200, {
                     "text": (
@@ -1441,17 +1491,6 @@ class RoboHandler(SimpleHTTPRequestHandler):
                     "sources": [],
                 })
                 return
-
-            if is_coding_request(query) and not api_configured:
-                self.send_json(503, {
-                    "error": "GEMINI_API_KEY is unavailable to this server process. Confirm it is set on the same "
-                    "Railway service/environment running server.py, then redeploy or restart. No additional key is needed.",
-                })
-                return
-
-            recent_questions = [message["text"] for message in validated if message["role"] == "user"][-3:]
-            search_query = " ".join(recent_questions)
-            search_result = search_sources(search_query, include_news=False)
             if api_configured:
                 try:
                     answer = generate_gemini_answer(
@@ -1474,6 +1513,22 @@ class RoboHandler(SimpleHTTPRequestHandler):
                         "sources": search_result["sources"],
                     })
                 return
+
+            if code_example:
+                    answer = {
+                        "text": format_code_example(code_example),
+                        "sources": search_result["sources"],
+                    }
+                    self.send_json(200, add_language_fallback_notice(answer, response_language))
+                    return
+            if is_coding_request(query):
+                    result = answer_from_web_search(query, search_result)
+                    result["text"] = (
+                        "I searched the web first, but custom code generation needs an available AI model. "
+                        "Here are the closest results:\n\n" + result["text"]
+                    )
+                    self.send_json(200, add_language_fallback_notice(result, response_language))
+                    return
 
             self.send_json(200, add_language_fallback_notice(
                 answer_from_web_search(query, search_result),

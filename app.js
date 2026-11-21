@@ -681,7 +681,7 @@ async function sendMessage(text) {
   if ((!value && !selectedFiles.length) || sendingMessage || preparingMessage) return;
   if (EXPLICIT_SEXUAL_REQUEST.test(value) || isSensitiveActionRequest(value)) {
     input.value = "";
-    appendLocalResponse(value, "I cannot generate these types of content.");
+    appendLocalResponse(value, "Sorry, I can't generate this type of content.");
     return;
   }
   preparingMessage = true;

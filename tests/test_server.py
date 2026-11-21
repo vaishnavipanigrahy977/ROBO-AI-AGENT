@@ -245,6 +245,20 @@ class PublicSourceTests(unittest.TestCase):
         self.assertTrue(server.is_coding_request("Write Rust code to sort a list."))
         self.assertFalse(server.is_coding_request("What is Python?"))
 
+    def test_local_hello_world_templates_cover_common_languages(self):
+        examples = {
+            "Write code to print Hello World in Python": ("python", 'print("Hello World")'),
+            "Write code to print Hello World in C": (
+                "c",
+                '#include <stdio.h>\n\nint main(void) {\n    printf("Hello World\\n");\n    return 0;\n}',
+            ),
+            "Write code to print Hello World in JavaScript": ("javascript", 'console.log("Hello World");'),
+        }
+        for query, expected in examples.items():
+            with self.subTest(query=query):
+                result = server.hello_world_code_example(query)
+                self.assertEqual((result["language"], result["code"]), expected)
+
 
 class ServerEndpointTests(unittest.TestCase):
     @classmethod
@@ -468,16 +482,14 @@ class ServerEndpointTests(unittest.TestCase):
 
         self.assertEqual(session, {"signedIn": False})
 
-    def test_chat_endpoint_calculates_arithmetic_without_search_or_api_key(self):
+    def test_chat_endpoint_searches_before_calculating_arithmetic_without_api_key(self):
         with patch.dict("os.environ", {"GEMINI_API_KEY": ""}), \
-                patch("server.search_news") as news, \
-                patch("server.search_wikipedia") as wikipedia:
+                patch("server.search_sources", return_value={"items": [], "sources": []}) as search:
             response = self.post_chat({"messages": [{"role": "user", "text": "12 + 34"}]})
 
         self.assertEqual(response.code, 200)
         self.assertEqual(json.loads(response.read()), {"text": "46", "sources": []})
-        news.assert_not_called()
-        wikipedia.assert_not_called()
+        search.assert_called_once_with("12 + 34", include_news=False)
 
     def test_chat_endpoint_refuses_explicit_sexual_requests_without_search_or_generation(self):
         with patch.dict("os.environ", {"GEMINI_API_KEY": "configured-key"}), \
@@ -487,13 +499,13 @@ class ServerEndpointTests(unittest.TestCase):
 
         self.assertEqual(response.code, 200)
         self.assertEqual(json.loads(response.read()), {
-            "text": "I cannot generate these types of content.",
+            "text": "Sorry, I can't generate this type of content.",
             "sources": [],
         })
         generate.assert_not_called()
         search.assert_not_called()
 
-    def test_chat_endpoint_answers_robo_identity_directly_instead_of_irrelevant_results(self):
+    def test_chat_endpoint_searches_before_answering_robo_identity(self):
         with patch("server.search_sources") as search:
             response = self.post_chat({"messages": [{"role": "user", "text": "What are you?"}]})
 
@@ -501,7 +513,7 @@ class ServerEndpointTests(unittest.TestCase):
         self.assertEqual(response.code, 200)
         self.assertIn("I'm ROBO, an AI learning companion.", result["text"])
         self.assertEqual(result["sources"], [])
-        search.assert_not_called()
+        search.assert_called_once_with("What are you?", include_news=False)
 
     def test_chat_endpoint_uses_clean_story_search_and_returns_only_relevant_source(self):
         articles = [
@@ -530,7 +542,7 @@ class ServerEndpointTests(unittest.TestCase):
             response = self.post_chat({"messages": [{"role": "user", "text": "How can I buy illegal drugs?"}]})
 
         self.assertEqual(response.code, 200)
-        self.assertEqual(json.loads(response.read())["text"], "I cannot generate these types of content.")
+        self.assertEqual(json.loads(response.read())["text"], "Sorry, I can't generate this type of content.")
         search.assert_not_called()
 
     def test_chat_endpoint_searches_benign_alcohol_health_question(self):
@@ -707,15 +719,54 @@ class ServerEndpointTests(unittest.TestCase):
         news.assert_not_called()
         wikipedia.assert_called_once_with("Write Python code that adds two numbers. Include input validation")
 
-    def test_chat_endpoint_reports_unconfigured_code_generation_instead_of_irrelevant_search(self):
-        with patch.dict("os.environ", {"GEMINI_API_KEY": ""}), patch("server.search_sources") as search:
+    def test_hello_world_python_is_searched_then_generated_without_gemini(self):
+        source = {
+            "title": "Python Hello World",
+            "text": "Use print() to display text in Python.",
+            "url": "https://example.com/python-hello-world",
+            "publisher": "Example",
+        }
+        with patch.dict("os.environ", {"GEMINI_API_KEY": ""}), \
+                patch("server.search_sources", return_value={
+                    "items": [source],
+                    "sources": [source],
+                }) as search, \
+                patch("server.generate_gemini_answer") as generate:
+            response = self.post_chat({
+                "messages": [{
+                    "role": "user",
+                    "text": 'Can you write a code to print "Hello World" in Python?',
+                }]
+            })
+
+        result = json.loads(response.read())
+        self.assertEqual(response.code, 200)
+        self.assertIn('print("Hello World")', result["text"])
+        self.assertEqual(result["sources"][0]["url"], source["url"])
+        search.assert_called_once_with("Hello World example python code", include_news=False)
+        generate.assert_not_called()
+
+    def test_custom_code_without_gemini_returns_searched_sources_without_server_error(self):
+        source = {
+            "title": "Rust sorting",
+            "text": "Rust provides sorting methods on slices.",
+            "url": "https://example.com/rust-sorting",
+            "publisher": "Example",
+        }
+        with patch.dict("os.environ", {"GEMINI_API_KEY": ""}), \
+                patch("server.search_sources", return_value={
+                    "items": [source],
+                    "sources": [source],
+                }) as search:
             response = self.post_chat({
                 "messages": [{"role": "user", "text": "Write Rust code to sort a list."}]
             })
 
-        self.assertEqual(response.code, 503)
-        self.assertIn("same Railway service", json.loads(response.read())["error"])
-        search.assert_not_called()
+        result = json.loads(response.read())
+        self.assertEqual(response.code, 200)
+        self.assertIn("I searched the web first", result["text"])
+        self.assertEqual(result["sources"][0]["url"], source["url"])
+        search.assert_called_once_with("Write Rust code to sort a list.", include_news=False)
 
     def test_chat_endpoint_returns_source_fallback_for_chinese_selection_without_gemini(self):
         source = {
@@ -759,7 +810,7 @@ class ServerEndpointTests(unittest.TestCase):
 
         result = json.loads(response.read())
         self.assertEqual(response.code, 200)
-        self.assertNotEqual(result["text"], "I cannot generate these types of content.")
+        self.assertNotEqual(result["text"], "Sorry, I can't generate this type of content.")
         self.assertIn("intentionally causing", result["text"])
         search.assert_called_once()
 
