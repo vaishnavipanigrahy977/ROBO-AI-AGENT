@@ -339,8 +339,25 @@ class PublicSourceTests(unittest.TestCase):
         }
         for query, expected in examples.items():
             with self.subTest(query=query):
-                result = server.hello_world_code_example(query)
+                result = server.local_code_example(query)
                 self.assertEqual((result["language"], result["code"]), expected)
+
+    def test_local_python_voting_age_example_uses_input_and_checks_invalid_age(self):
+        query = "Give me code to create an age verifier to vote using input() in Python"
+        example = server.local_code_example(query)
+
+        self.assertEqual(example["language"], "python")
+        self.assertIn('int(input("Enter your age: ").strip())', example["code"])
+        self.assertIn("except ValueError:", example["code"])
+        self.assertIn("VOTING_AGE = 18", example["code"])
+
+        with patch("builtins.input", return_value="19"), patch("builtins.print") as output:
+            exec(example["code"], {"__name__": "__main__"})
+        output.assert_called_once_with("You are eligible to vote.")
+
+        with patch("builtins.input", return_value="abc"), patch("builtins.print") as output:
+            exec(example["code"], {"__name__": "__main__"})
+        output.assert_called_once_with("Please enter a valid whole number age.")
 
 
 class ServerEndpointTests(unittest.TestCase):
@@ -911,6 +928,29 @@ class ServerEndpointTests(unittest.TestCase):
         self.assertEqual(result["sources"][0]["url"], source["url"])
         search.assert_called_once_with("Hello World example python code", include_news=False)
         generate.assert_not_called()
+
+    def test_python_voting_age_code_is_available_without_gemini_or_relevant_sources(self):
+        source = {
+            "title": "Africa",
+            "text": "An unrelated search result.",
+            "url": "https://example.com/africa",
+            "publisher": "Example",
+        }
+        with patch.dict("os.environ", {"GEMINI_API_KEY": ""}), patch(
+            "server.search_sources", return_value={"items": [source], "sources": [source]}
+        ) as search:
+            response = self.post_chat({"messages": [{
+                "role": "user",
+                "text": "Can you give me the code to create a age verifier to vote using input() function in python",
+            }]})
+
+        result = json.loads(response.read())
+        self.assertEqual(response.code, 200)
+        self.assertIn("VOTING_AGE = 18", result["text"])
+        self.assertIn('input("Enter your age: ")', result["text"])
+        self.assertIn("adjust it to match local rules", result["text"])
+        self.assertEqual(result["sources"], [])
+        search.assert_called_once_with("Python voting age input example", include_news=False)
 
     def test_custom_code_without_gemini_returns_searched_sources_without_server_error(self):
         source = {

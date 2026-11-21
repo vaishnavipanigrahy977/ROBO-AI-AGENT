@@ -1084,8 +1084,40 @@ def calculate_arithmetic(query):
     return {"text": formatted, "sources": []}
 
 
-def hello_world_code_example(query):
-    if not is_coding_request(query) or not re.search(r"\bhello[\s-]+world\b", query, re.IGNORECASE):
+def local_code_example(query):
+    if not is_coding_request(query):
+        return None
+    if (
+        re.search(r"\b(?:vote|voting)\b", query, re.IGNORECASE)
+        and re.search(r"\b(?:age|eligible)\b", query, re.IGNORECASE)
+        and re.search(r"\bpython\b", query, re.IGNORECASE)
+    ):
+        return {
+            "language": "python",
+            "description": "checks whether someone meets the voting age",
+            "note": "The example uses 18 as the voting age; adjust it to match local rules.",
+            "suppressSources": True,
+            "code": (
+                "VOTING_AGE = 18\n\n"
+                "def main():\n"
+                "    try:\n"
+                "        age = int(input(\"Enter your age: \").strip())\n"
+                "    except ValueError:\n"
+                "        print(\"Please enter a valid whole number age.\")\n"
+                "        return\n\n"
+                "    if age < 0:\n"
+                "        print(\"Age cannot be negative.\")\n"
+                "    elif age >= VOTING_AGE:\n"
+                "        print(\"You are eligible to vote.\")\n"
+                "    else:\n"
+                "        years_left = VOTING_AGE - age\n"
+                "        print(f\"You are not eligible yet. You can vote in {years_left} year(s).\")\n\n"
+                "if __name__ == \"__main__\":\n"
+                "    main()"
+            ),
+            "searchQuery": "Python voting age input example",
+        }
+    if not re.search(r"\bhello[\s-]+world\b", query, re.IGNORECASE):
         return None
     examples = [
         (r"\bpython\b|\bpy\b", "python", 'print("Hello World")'),
@@ -1110,10 +1142,14 @@ def hello_world_code_example(query):
 
 
 def format_code_example(example):
-    return (
-        f"Here is a minimal {example['language']} program that prints Hello World:\n\n"
+    description = example.get("description", "prints Hello World")
+    response = (
+        f"Here is a minimal {example['language']} program that {description}:\n\n"
         f"```{example['language']}\n{example['code']}\n```"
     )
+    if example.get("note"):
+        response += f"\n\n{example['note']}"
+    return response
 
 
 def is_current_news_request(query):
@@ -1713,7 +1749,7 @@ class RoboHandler(SimpleHTTPRequestHandler):
                     ))
                 return
 
-            code_example = hello_world_code_example(query)
+            code_example = local_code_example(query)
             recent_questions = [message["text"] for message in validated if message["role"] == "user"][-3:]
             search_query = code_example["searchQuery"] if code_example else query
             if (
@@ -1733,7 +1769,7 @@ class RoboHandler(SimpleHTTPRequestHandler):
                         return
                     if not code_example:
                         raise
-                    print("Web search failed; returning the built-in Hello World example.", flush=True)
+                    print("Web search failed; returning a built-in code example.", flush=True)
                     answer = {
                         "text": format_code_example(code_example),
                         "sources": [],
@@ -1767,22 +1803,40 @@ class RoboHandler(SimpleHTTPRequestHandler):
                     sources = generated["sources"]
                     if use_google_grounding and not sources:
                         search_result = search_sources(search_query, include_news=False)
-                        result = answer_from_web_search(query, search_result)
-                        result["text"] = (
-                            "Google Search did not provide verifiable source links, so here are the closest "
-                            "public search results.\n\n" + result["text"]
-                        )
+                        if code_example:
+                            result = {
+                                "text": format_code_example(code_example),
+                                "sources": (
+                                    [] if code_example.get("suppressSources")
+                                    else search_result["sources"]
+                                ),
+                            }
+                        else:
+                            result = answer_from_web_search(query, search_result)
+                            result["text"] = (
+                                "Google Search did not provide verifiable source links, so here are the closest "
+                                "public search results.\n\n" + result["text"]
+                            )
                         self.send_json(200, add_language_fallback_notice(result, response_language))
                         return
                 except RuntimeError as error:
                     print(f"Gemini answer failed; returning web search results: {error}", flush=True)
                     if use_google_grounding:
                         search_result = search_sources(search_query, include_news=False)
-                    result = answer_from_web_search(query, search_result)
-                    result["text"] = (
-                        "ROBO's AI summary is temporarily unavailable, so here is the closest source-based answer.\n\n"
-                        + result["text"]
-                    )
+                    if code_example:
+                        result = {
+                            "text": format_code_example(code_example),
+                            "sources": (
+                                [] if code_example.get("suppressSources")
+                                else search_result["sources"]
+                            ),
+                        }
+                    else:
+                        result = answer_from_web_search(query, search_result)
+                        result["text"] = (
+                            "ROBO's AI summary is temporarily unavailable, so here is the closest source-based answer.\n\n"
+                            + result["text"]
+                        )
                     self.send_json(200, add_language_fallback_notice(result, response_language))
                 else:
                     self.send_json(200, {
@@ -1794,7 +1848,10 @@ class RoboHandler(SimpleHTTPRequestHandler):
             if code_example:
                 answer = {
                     "text": format_code_example(code_example),
-                    "sources": search_result["sources"],
+                    "sources": (
+                        [] if code_example.get("suppressSources")
+                        else search_result["sources"]
+                    ),
                 }
                 self.send_json(200, add_language_fallback_notice(answer, response_language))
                 return
