@@ -147,13 +147,15 @@ class PublicSourceTests(unittest.TestCase):
         self.assertFalse(server.is_sensitive_action_request("What are drugs?"))
         self.assertFalse(server.is_sensitive_action_request("Explain photosynthesis"))
 
-    def test_attachment_validation_limits_count_and_supported_text_files(self):
+    def test_attachment_validation_limits_count_and_accepts_unknown_text_files(self):
         self.assertEqual(
             server.validate_attachments([{"name": "notes.md", "content": "A note."}]),
             [{"name": "notes.md", "content": "A note."}],
         )
-        with self.assertRaisesRegex(server.AttachmentValidationError, "supported text"):
-            server.validate_attachments([{"name": "notes.exe", "content": "Not parsed"}])
+        self.assertEqual(
+            server.validate_attachments([{"name": "notes.custom", "content": "Readable text."}]),
+            [{"name": "notes.custom", "content": "Readable text."}],
+        )
         with self.assertRaisesRegex(server.AttachmentValidationError, "no more than 15"):
             server.validate_attachments([{"name": "notes.txt", "content": ""}] * 16)
 
@@ -183,13 +185,17 @@ class PublicSourceTests(unittest.TestCase):
         self.assertIn("Quarterly revenue", uploads[1]["content"])
 
     def test_image_upload_keeps_verified_image_data_for_gemini(self):
+        source = io.BytesIO()
+        server.Image.new("RGB", (1, 1), (12, 34, 56)).save(source, format="PNG")
         uploaded = server.validate_attachments([{
             "name": "photo.png",
-            "data": base64.b64encode(b"\x89PNG\r\n\x1a\nimage").decode(),
+            "data": base64.b64encode(source.getvalue()).decode(),
         }])
 
         self.assertEqual(uploaded[0]["mimeType"], "image/png")
-        self.assertEqual(base64.b64decode(uploaded[0]["data"]), b"\x89PNG\r\n\x1a\nimage")
+        converted = server.Image.open(io.BytesIO(base64.b64decode(uploaded[0]["data"])))
+        self.assertEqual(converted.format, "PNG")
+        self.assertEqual(converted.getpixel((0, 0)), (12, 34, 56))
 
     def test_pdf_upload_uses_bounded_text_extraction(self):
         page = MagicMock()
@@ -559,14 +565,47 @@ class ServerEndpointTests(unittest.TestCase):
         self.assertIn("Clouds form when water vapor cools.", result["text"])
         search.assert_not_called()
 
-    def test_chat_endpoint_rejects_unsupported_uploaded_files(self):
-        response = self.post_chat({
-            "messages": [{"role": "user", "text": "Summarize this"}],
-            "attachments": [{"name": "report.exe", "content": "not parsed"}],
-        })
+    def test_chat_endpoint_passes_unknown_binary_file_to_gemini_without_executing_it(self):
+        raw_data = b"\x00\x01\x02\x03binary"
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "configured-key"}), \
+                patch("server.generate_gemini_answer", return_value="File summary.") as generate:
+            response = self.post_chat({
+                "messages": [{"role": "user", "text": "Summarize this file"}],
+                "attachments": [{
+                    "name": "report.unusual",
+                    "data": base64.b64encode(raw_data).decode("ascii"),
+                }],
+            })
 
-        self.assertEqual(response.code, 400)
-        self.assertIn("supported text file", json.loads(response.read())["error"])
+        self.assertEqual(response.code, 200)
+        passed_file = generate.call_args.kwargs["attachments"][0]
+        self.assertEqual(passed_file["name"], "report.unusual")
+        self.assertEqual(passed_file["mimeType"], "application/octet-stream")
+        self.assertEqual(base64.b64decode(passed_file["data"]), raw_data)
+
+    def test_attachment_parser_reads_dotfiles_and_unknown_utf8_text(self):
+        parsed = server.validate_attachments([
+            {"name": ".env", "content": "MODE=development"},
+            {"name": ".gitignore", "content": "*.pyc"},
+            {"name": "notes.custom", "content": "A readable UTF-8 note."},
+        ])
+
+        self.assertEqual(
+            [item["content"] for item in parsed],
+            ["MODE=development", "*.pyc", "A readable UTF-8 note."],
+        )
+
+    def test_attachment_parser_converts_ico_images_to_png_for_gemini(self):
+        source = io.BytesIO()
+        server.Image.new("RGBA", (16, 16), (12, 34, 56, 255)).save(source, format="ICO")
+        parsed = server.validate_attachments([{
+            "name": "icon.ico",
+            "data": base64.b64encode(source.getvalue()).decode("ascii"),
+        }])
+
+        self.assertEqual(parsed[0]["mimeType"], "image/png")
+        converted = server.Image.open(io.BytesIO(base64.b64decode(parsed[0]["data"])))
+        self.assertEqual(converted.format, "PNG")
 
     def test_chat_endpoint_passes_actual_upload_text_to_gemini(self):
         with patch.dict("os.environ", {"GEMINI_API_KEY": "configured-key"}), \
@@ -675,8 +714,20 @@ class ServerEndpointTests(unittest.TestCase):
             })
 
         self.assertEqual(response.code, 503)
-        self.assertIn("Set GEMINI_API_KEY", json.loads(response.read())["error"])
+        self.assertIn("same Railway service", json.loads(response.read())["error"])
         search.assert_not_called()
+
+    def test_chat_endpoint_does_not_return_english_fallback_for_chinese_selection(self):
+        with patch.dict("os.environ", {"GEMINI_API_KEY": ""}), \
+                patch("server.search_sources", return_value={"items": [], "sources": []}) as search:
+            response = self.post_chat({
+                "messages": [{"role": "user", "text": "What is photosynthesis?"}],
+                "responseLanguage": "zh-CN",
+            })
+
+        self.assertEqual(response.code, 503)
+        self.assertIn("selected response language", json.loads(response.read())["error"])
+        search.assert_called_once()
 
     def test_chat_endpoint_rejects_unsupported_response_language(self):
         response = self.post_chat({
@@ -726,9 +777,27 @@ class ServerEndpointTests(unittest.TestCase):
             request_body["contents"][-1]["parts"],
         )
         self.assertIn("working code in any language", request_body["system_instruction"]["parts"][0]["text"])
-        self.assertIn("Respond in Hindi.", request_body["system_instruction"]["parts"][0]["text"])
+        self.assertIn("entirely in Hindi", request_body["system_instruction"]["parts"][0]["text"])
         self.assertIn("untrusted reference data", request_body["system_instruction"]["parts"][0]["text"])
-        self.assertIn("cover every uploaded file", request_body["system_instruction"]["parts"][0]["text"])
+
+    def test_gemini_prompt_requires_simplified_chinese_for_all_prose(self):
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = json.dumps({
+            "candidates": [{"content": {"parts": [{"text": "光合作用将光能转化为化学能。"}]}}]
+        }).encode()
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "server-only-secret"}), \
+                patch("server.urlopen", return_value=response) as open_url:
+            server.generate_gemini_answer(
+                [{"role": "user", "text": "Explain photosynthesis."}],
+                response_language="zh-CN",
+            )
+
+        request_body = json.loads(open_url.call_args.args[0].data)
+        instruction = request_body["system_instruction"]["parts"][0]["text"]
+        self.assertIn("entirely in Simplified Chinese", instruction)
+        self.assertIn("Translate web excerpts and uploaded-file material", instruction)
+        self.assertIn("Do not switch to English", instruction)
 
     def test_chat_endpoint_searches_public_web_sources_without_gemini(self):
         article = {

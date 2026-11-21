@@ -20,12 +20,17 @@ const MAX_CHAT_FILES = 15;
 const MAX_CHAT_FILE_BYTES = 1024 * 1024;
 const MAX_CHAT_FILES_BYTES = 5 * 1024 * 1024;
 const CHAT_TEXT_FILE_EXTENSIONS = new Set([
-  "txt", "md", "csv", "json", "py", "js", "ts", "html", "css", "xml", "yaml", "yml",
-  "log", "sql", "toml", "ini", "c", "h", "cpp", "hpp", "java", "go", "rs", "sh", "ps1", "tex"
+  "txt", "md", "markdown", "rst", "adoc", "csv", "tsv", "json", "jsonl", "py", "pyw",
+  "js", "mjs", "cjs", "ts", "tsx", "jsx", "html", "htm", "css", "scss", "sass", "less",
+  "xml", "svg", "yaml", "yml", "log", "sql", "toml", "ini", "cfg", "conf", "properties",
+  "env", "lock", "c", "h", "cc", "cpp", "hpp", "cs", "java", "go", "rs", "sh", "bash",
+  "zsh", "ps1", "bat", "cmd", "tex", "rb", "php", "swift", "kt", "kts", "dart", "lua",
+  "pl", "r", "ex", "exs", "erl", "hrl", "clj", "cljs", "scala", "gradle", "make",
+  "dockerfile", "ipynb", "gitignore"
 ]);
-const CHAT_FILE_EXTENSIONS = new Set([
-  ...CHAT_TEXT_FILE_EXTENSIONS, "pdf", "docx", "xlsx", "pptx", "odt", "ods", "odp", "rtf", "eml",
-  "png", "jpg", "jpeg", "webp", "gif", "mp3", "wav", "m4a", "flac", "ogg", "mp4", "mov", "webm", "mpeg", "mpg", "avi"
+const CHAT_TEXT_FILE_NAMES = new Set([
+  ".gitignore", ".dockerignore", ".gitattributes", ".gitmodules", ".npmrc", ".editorconfig",
+  "dockerfile", "makefile", "procfile", "license", "readme"
 ]);
 const RESPONSE_LANGUAGES = new Set(["en", "hi", "bn", "mr", "ta", "te", "ur", "es", "fr", "de", "pt", "ar", "zh-CN", "ja", "ko", "ru"]);
 const EXPLICIT_SEXUAL_REQUEST = /\b(?:porn(?:ography)?|xxx|nsfw|hentai|lewd|incest|bestiality|erotic(?:a)?|sexualit(?:y|ies)|sexually explicit|sexual content|sexual (?:act|story|fantasy)|sex scene|explicit sexual|nude(?:s|ness)?|nudity|naked (?:person|people|woman|man|girl|boy|child|children|teen|teenager|body)|show (?:me )?(?:a )?(?:naked|nude)|topless (?:person|people|woman|man|girl|boy)|bare breasts|striptease|fetish|(?:underage|minor|child(?:ren)?|kid|teen(?:ager)?)\b.{0,40}\b(?:sex|sexual|porn|nude|naked|erotic)|(?:sex|sexual|porn|nude|naked|erotic)\b.{0,40}\b(?:underage|minor|child(?:ren)?|kid|teen(?:ager)?))\b/i;
@@ -80,10 +85,7 @@ let settings = loadStored(SETTINGS_STORAGE_KEY, { theme: "light", responseStyle:
 if (!ALARM_SOUNDS.some(sound => sound.id === settings.alarmSound)) settings.alarmSound = "classic";
 if (!RESPONSE_LANGUAGES.has(settings.responseLanguage)) settings.responseLanguage = "en";
 let timetableEntries = loadStored(TIMETABLE_STORAGE_KEY, DEFAULT_TIMETABLE);
-let alarmEntries = loadStored(ALARM_STORAGE_KEY, [
-  { id: "alarm-1", when: "2026-11-11T07:30", label: "Wake-up review", ringing: false },
-  { id: "alarm-2", when: "2026-11-11T18:45", label: "Evening recap", ringing: false }
-]);
+let alarmEntries = loadStored(ALARM_STORAGE_KEY, []);
 let activeClockMode = "alarm";
 let selectedCalendarMonth = new Date().getMonth();
 let selectedCalendarYear = new Date().getFullYear();
@@ -562,9 +564,12 @@ function renderSelectedFiles() {
 async function readSelectedFiles() {
   const files = [];
   for (const file of selectedFiles) {
-    const extension = file.name.split(".").pop().toLowerCase();
     const data = await file.arrayBuffer();
-    if (!CHAT_TEXT_FILE_EXTENSIONS.has(extension)) {
+    const basename = file.name.split(/[\\/]/).pop().toLowerCase();
+    const extension = basename.split(".").pop();
+    const isTextFile = CHAT_TEXT_FILE_EXTENSIONS.has(extension) ||
+      CHAT_TEXT_FILE_NAMES.has(basename) || basename.startsWith(".env.");
+    if (!isTextFile) {
       const bytes = new Uint8Array(data);
       let binary = "";
       for (let offset = 0; offset < bytes.length; offset += 0x4000) {
@@ -574,7 +579,13 @@ async function readSelectedFiles() {
       continue;
     }
     try {
-      const content = new TextDecoder("utf-8", { fatal: true }).decode(data);
+      const bytes = new Uint8Array(data);
+      const encoding = bytes[0] === 0xff && bytes[1] === 0xfe
+        ? "utf-16le"
+        : bytes[0] === 0xfe && bytes[1] === 0xff
+          ? "utf-16be"
+          : "utf-8";
+      const content = new TextDecoder(encoding, { fatal: true }).decode(data);
       files.push({ name: file.name, content });
     } catch (error) {
       throw new Error(`${file.name} is not readable UTF-8 text.`);
@@ -599,7 +610,6 @@ async function requestAnswer(conversation, attachments = []) {
           .filter(message => !message.localOnly)
           .map(({ role, text }) => ({ role, text })),
         responseStyle: settings.responseStyle,
-        responseLanguage: settings.responseLanguage,
         responseLanguage: settings.responseLanguage,
         attachments
       })
@@ -694,7 +704,8 @@ async function sendMessage(text) {
     saveConversations();
     return;
   }
-  if (!attachments.length && /^(hi|hello|hey|hiya|good morning|good afternoon|good evening)[!.?,\s]*$/i.test(value)) {
+  if (settings.responseLanguage === "en" && !attachments.length &&
+      /^(hi|hello|hey|hiya|good morning|good afternoon|good evening)[!.?,\s]*$/i.test(value)) {
     conversation.messages.push({ role: "assistant", text: "Hello! How can I help you today?" });
     conversation.updatedAt = Date.now();
     renderConversation();
@@ -993,7 +1004,11 @@ function renderAlarmList() {
 }
 
 function addAlarm(whenValue, labelValue) {
-  if (!whenValue) return;
+  const scheduledAt = new Date(whenValue);
+  if (!whenValue || Number.isNaN(scheduledAt.getTime()) || scheduledAt <= new Date()) {
+    showToast("Choose an alarm time in the future.");
+    return false;
+  }
   try {
     const audio = getAlarmAudioContext();
     if (audio?.state === "suspended") audio.resume().catch(error => console.warn("Unable to prepare ROBO alarm audio.", error));
@@ -1010,6 +1025,18 @@ function addAlarm(whenValue, labelValue) {
   alarmEntries.push(nextAlarm);
   saveStored(ALARM_STORAGE_KEY, alarmEntries);
   renderAlarmList();
+  return true;
+}
+
+function dismissExpiredAlarms() {
+  const now = Date.now();
+  const remaining = alarmEntries.filter(alarm => {
+    const target = new Date(alarm.when).getTime();
+    return Number.isNaN(target) || target > now || alarm.ringing;
+  });
+  if (remaining.length === alarmEntries.length) return;
+  alarmEntries = remaining;
+  saveStored(ALARM_STORAGE_KEY, alarmEntries);
 }
 
 function checkAlarms() {
@@ -1303,11 +1330,6 @@ document.querySelector("#chat-file-input").addEventListener("change", event => {
     return;
   }
   for (const file of additions) {
-    const extension = file.name.split(".").pop().toLowerCase();
-    if (!CHAT_FILE_EXTENSIONS.has(extension)) {
-      showToast(`${file.name} is not a supported document, image, or text file.`);
-      return;
-    }
     if (file.size > MAX_CHAT_FILE_BYTES) {
       showToast(`${file.name} is larger than the 1 MB per-file limit.`);
       return;
@@ -1472,7 +1494,7 @@ document.querySelector("#alarm-form").addEventListener("submit", event => {
   event.preventDefault();
   const whenInput = document.querySelector("#alarm-datetime");
   const labelInput = document.querySelector("#alarm-label");
-  addAlarm(whenInput.value, labelInput.value);
+  if (!addAlarm(whenInput.value, labelInput.value)) return;
   event.currentTarget.reset();
   labelInput.value = "Morning review";
 });
@@ -1735,6 +1757,7 @@ renderCards();
 renderHistory();
 renderStudents();
 renderSchedule();
+dismissExpiredAlarms();
 renderAlarmList();
 renderAlarmSoundOptions();
 updateStopwatchDisplay();
@@ -1745,3 +1768,6 @@ initializeAuth();
 setInterval(updateClock, 1000);
 setTimeout(hideSplashScreen, 1100);
 applyTheme();
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) dismissExpiredAlarms();
+});
