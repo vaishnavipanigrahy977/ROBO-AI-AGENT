@@ -444,6 +444,25 @@ function setDocumentLanguage(language) {
     RTL_LANGUAGE_NAMES.has(language) ? "rtl" : "ltr";
 }
 
+async function updateSearchProviderCopy() {
+  try {
+    const response = await fetch("/api/health", { headers: { Accept: "application/json" } });
+    const health = await response.json();
+    if (!response.ok) throw new Error(health.error || `ROBO returned HTTP ${response.status}.`);
+    const usesGoogle = typeof health.webSearchProvider === "string" &&
+      health.webSearchProvider.startsWith("Google Search");
+    const searchLabel = usesGoogle ? "Search Google" : "Search the web";
+    document.querySelector("#workspace-chat-input").placeholder =
+      usesGoogle ? "Search Google..." : "Search the web...";
+    document.querySelector("#chat-input-label").textContent = searchLabel;
+    document.querySelector("#chat-intro").textContent = usesGoogle
+      ? "Search Google and get source-grounded answers with links."
+      : "Search public web sources and get linked results.";
+  } catch (error) {
+    console.error("ROBO could not identify the active web-search provider.", error);
+  }
+}
+
 async function translateUiTargets(language, targets, requestId) {
   const translationCache = getUiTranslationCache(language);
   const pending = pendingUiTranslations.get(language) || new Set();
@@ -2284,6 +2303,7 @@ resetTimer();
 updateClock();
 updateAuthUi();
 observeUiChanges();
+updateSearchProviderCopy();
 if (!settings.responseLanguage.toLowerCase().startsWith("english")) {
   applyUiLanguage(settings.responseLanguage).catch(error => {
     console.error("ROBO could not restore the selected website language.", error);

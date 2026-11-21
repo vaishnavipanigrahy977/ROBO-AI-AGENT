@@ -75,7 +75,7 @@
               <span class="robo-avatar welcome-avatar" aria-hidden="true"><img class="robo-icon" src="robo-icon.ico" alt=""></span>
               <p class="eyebrow">SEARCH THE OPEN WEB</p>
               <h1 id="chat-heading">Hello! How can I help you today?</h1>
-              <p class="chat-intro">Ask a question to search public web sources. ROBO will show you the source links.</p>
+              <p class="chat-intro" id="chat-intro">Search the web and get answers with source links.</p>
               <div class="starter-prompts">
                 <button type="button" data-prompt="Tell me about the Freshwater Swamp Ecosystem"><span>♧</span> Explore the featured swamp</button>
                 <button type="button" data-prompt="Explain the discovery of penicillin"><span>✚</span> How was penicillin discovered?</button>
@@ -85,8 +85,8 @@
             <div class="conversation-messages" id="conversation-messages" aria-live="polite" aria-label="Conversation"></div>
             <div class="chat-composer-wrap">
               <form class="workspace-composer" id="workspace-chat-form">
-                <label class="sr-only" for="workspace-chat-input">Message ROBO</label>
-                <textarea id="workspace-chat-input" rows="1" placeholder="Ask ROBO a question..." autocomplete="off"></textarea>
+                <label class="sr-only" id="chat-input-label" for="workspace-chat-input">Search the web</label>
+                <textarea id="workspace-chat-input" rows="1" placeholder="Search the web..." autocomplete="off"></textarea>
                 <input id="chat-file-input" type="file" multiple hidden>
                 <div id="selected-files" class="selected-files" aria-live="polite" hidden></div>
                 <div class="composer-actions">
@@ -378,6 +378,6 @@
     </dialog>
 
     <script src="explorations.js"></script>
-    <script src="app.js?v=robo-localization-2"></script>
+    <script src="app.js?v=robo-google-search-1"></script>
   </body>
 </html>

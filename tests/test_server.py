@@ -311,6 +311,8 @@ class PublicSourceTests(unittest.TestCase):
         self.assertEqual(matches[0]["title"], "Cinderella")
         self.assertEqual(server.normalize_search_query("Is alcohol harmful?"), "alcohol health effects")
         self.assertEqual(server.normalize_search_query("Is alcohol harmful or not?"), "alcohol health effects")
+        self.assertEqual(server.normalize_search_query("Tell me the Gayatri mantra"), "Gayatri mantra")
+        self.assertEqual(server.normalize_search_query("Summarize ramayan in short"), "ramayan")
         self.assertEqual(server.rank_search_items("What is this?", matches), [])
         health_matches = server.rank_search_items("Is alcohol harmful?", [
             {"title": "Alcohol laws in Germany", "text": "Rules for alcohol sale."},
@@ -1109,6 +1111,46 @@ class ServerEndpointTests(unittest.TestCase):
         self.assertEqual(result["sources"][0]["url"], article["url"])
         wikipedia.assert_called_once_with("Navaratri")
         news.assert_not_called()
+
+    def test_chat_search_uses_latest_question_instead_of_combining_unrelated_topics(self):
+        ramayana = {
+            "title": "Ramayana",
+            "text": "The Ramayana is an ancient Indian epic.",
+            "url": "https://example.com/ramayana",
+            "publisher": "Example",
+        }
+        with patch.dict("os.environ", {"GEMINI_API_KEY": ""}), patch(
+            "server.search_sources", return_value={"items": [ramayana], "sources": [ramayana]}
+        ) as search:
+            response = self.post_chat({"messages": [
+                {"role": "user", "text": "Tell me the Gayatri mantra"},
+                {"role": "assistant", "text": "A response about the mantra."},
+                {"role": "user", "text": "Summarize ramayan in short"},
+            ]})
+
+        result = json.loads(response.read())
+        self.assertEqual(response.code, 200)
+        self.assertIn("The Ramayana is an ancient Indian epic.", result["text"])
+        search.assert_called_once_with("Summarize ramayan in short", include_news=False)
+
+    def test_chat_search_keeps_context_for_explicit_follow_up_questions(self):
+        photosynthesis = {
+            "title": "Photosynthesis",
+            "text": "Photosynthesis converts light into chemical energy.",
+            "url": "https://example.com/photosynthesis",
+            "publisher": "Example",
+        }
+        with patch.dict("os.environ", {"GEMINI_API_KEY": ""}), patch(
+            "server.search_sources", return_value={"items": [photosynthesis], "sources": [photosynthesis]}
+        ) as search:
+            response = self.post_chat({"messages": [
+                {"role": "user", "text": "What is photosynthesis?"},
+                {"role": "assistant", "text": "It converts light into chemical energy."},
+                {"role": "user", "text": "Tell me more"},
+            ]})
+
+        self.assertEqual(response.code, 200)
+        search.assert_called_once_with("What is photosynthesis? Tell me more", include_news=False)
 
     def test_chat_endpoint_falls_back_to_public_search_results_when_gemini_fails(self):
         article = {

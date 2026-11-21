@@ -858,6 +858,12 @@ SEARCH_STOP_WORDS = {
     "how", "i", "is", "it", "me", "of", "please", "the", "tell", "that", "to", "what",
     "this", "when", "where", "which", "who", "why", "with", "would", "write", "you", "or", "not",
 }
+SEARCH_FOLLOW_UP_QUERY = re.compile(
+    r"^(?:and\s+)?(?:what about|how about|tell me more|explain (?:more|that|this)|"
+    r"summarize (?:it|that|this)|summarise (?:it|that|this)|include\b|add\b|"
+    r"make it\b|continue\b)",
+    re.IGNORECASE,
+)
 
 
 def normalize_search_query(query):
@@ -872,13 +878,14 @@ def normalize_search_query(query):
     )
     normalized = re.sub(
         r"^(?:(?:can|could|would) you\s+)?(?:please\s+)?"
-        r"(?:tell me about|explain|describe|what is|what are|who is|who are|where is|"
+        r"(?:tell me(?: about)?|summari[sz]e|give me (?:a )?summary of|explain|describe|what is|what are|who is|who are|where is|"
         r"when was|when did|why is|why are|how does|how do|search for|find)\s+",
         "",
         normalized,
         flags=re.IGNORECASE,
     )
     normalized = re.sub(r"^[\s:,-]+|[?!.]+$", "", normalized).strip()
+    normalized = re.sub(r"\s+(?:in short|in brief|briefly)$", "", normalized, flags=re.IGNORECASE).strip()
     normalized = re.sub(r"\s+or\s+not$", "", normalized, flags=re.IGNORECASE).strip()
     normalized = re.sub(r"^(?:the|a|an)\s+", "", normalized, flags=re.IGNORECASE)
     normalized = re.sub(r"\b(?:harmful|dangerous)\b", "health effects", normalized, flags=re.IGNORECASE)
@@ -1321,7 +1328,9 @@ def generate_gemini_answer(
     if google_search:
         system_instruction += (
             " Search Google before answering factual questions. Base factual claims on the search results, "
-            "and be clear when the results do not contain a reliable answer."
+            "and be clear when the results do not contain a reliable answer. Use the latest user message as "
+            "the query; use earlier conversation only to resolve a clear follow-up, and never mix unrelated "
+            "older questions into the search."
         )
     contents = []
     for message in messages:
@@ -1706,7 +1715,13 @@ class RoboHandler(SimpleHTTPRequestHandler):
 
             code_example = hello_world_code_example(query)
             recent_questions = [message["text"] for message in validated if message["role"] == "user"][-3:]
-            search_query = code_example["searchQuery"] if code_example else " ".join(recent_questions)
+            search_query = code_example["searchQuery"] if code_example else query
+            if (
+                not code_example
+                and len(recent_questions) > 1
+                and SEARCH_FOLLOW_UP_QUERY.match(query.strip())
+            ):
+                search_query = f"{recent_questions[-2]} {query}"
             use_google_grounding = api_configured and not google_search_configured()
             search_result = {"items": [], "sources": []}
             if not use_google_grounding:
