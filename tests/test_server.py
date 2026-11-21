@@ -4,9 +4,11 @@ import json
 import threading
 import unittest
 import xml.etree.ElementTree as ET
+import zipfile
 from http.server import ThreadingHTTPServer
 from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError
+from urllib.parse import parse_qs, urlsplit
 from urllib.request import Request, urlopen
 
 import server
@@ -66,13 +68,52 @@ class PublicSourceTests(unittest.TestCase):
     def test_search_combines_free_sources_and_includes_citations(self):
         articles = [{"title": "Topic", "text": "An encyclopedia summary.", "url": "https://en.wikipedia.org/?curid=1", "publisher": "Wikipedia"}]
         news = [{"title": "Latest event", "text": "A news summary.", "url": "https://news.google.com/item", "publisher": "Example", "publishedAt": "Today"}]
-        with patch("server.search_wikipedia", return_value=articles), patch("server.search_news", return_value=news):
-            result = server.search_sources("Tell me about this")
+        with patch.dict("os.environ", {"GOOGLE_SEARCH_API_KEY": "", "GOOGLE_SEARCH_ENGINE_ID": ""}), \
+                patch("server.search_wikipedia", return_value=articles), \
+                patch("server.search_news", return_value=news):
+            result = server.search_sources("Tell me about topic current event")
 
         self.assertIn("An encyclopedia summary.", result["text"])
         self.assertIn("Latest event", result["text"])
         self.assertEqual([source["url"] for source in result["sources"]], [articles[0]["url"], news[0]["url"]])
         self.assertIn("searchedAt", result)
+
+    def test_google_search_cites_results_without_returning_api_credentials(self):
+        with patch.dict("os.environ", {
+            "GOOGLE_SEARCH_API_KEY": "server-only-key",
+            "GOOGLE_SEARCH_ENGINE_ID": "engine-id",
+        }), patch("server.fetch_json", return_value={"items": [{
+            "title": "Health effects of alcohol",
+            "snippet": "Alcohol use can harm health.",
+            "link": "https://example.com/health",
+            "displayLink": "example.com",
+        }]}) as fetch:
+            results = server.search_google("alcohol health effects")
+
+        query = parse_qs(urlsplit(fetch.call_args.args[0]).query)
+        self.assertEqual(query["key"], ["server-only-key"])
+        self.assertEqual(results[0]["publisher"], "example.com")
+        self.assertNotIn("server-only-key", json.dumps(results))
+
+    def test_search_sources_prefers_google_when_configured(self):
+        google_results = [{
+            "title": "Python docs",
+            "text": "Official Python documentation.",
+            "url": "https://docs.python.org/",
+            "publisher": "docs.python.org",
+        }]
+        with patch.dict("os.environ", {
+            "GOOGLE_SEARCH_API_KEY": "server-only-key",
+            "GOOGLE_SEARCH_ENGINE_ID": "engine-id",
+        }), patch("server.search_google", return_value=google_results) as google, \
+                patch("server.search_wikipedia") as wikipedia:
+            result = server.search_sources("What is Python?", include_news=False)
+
+        google.assert_called_once_with("Python")
+        wikipedia.assert_not_called()
+        self.assertEqual(result["searchProvider"], "Google Search")
+        self.assertIn("Google Search results:", result["text"])
+        self.assertEqual(result["sources"][0]["url"], google_results[0]["url"])
 
     def test_search_still_works_if_one_public_source_is_unavailable(self):
         articles = [{"title": "Topic", "text": "A useful summary.", "url": "https://en.wikipedia.org/?curid=1", "publisher": "Wikipedia"}]
@@ -85,11 +126,118 @@ class PublicSourceTests(unittest.TestCase):
         self.assertEqual(len(result["sources"]), 1)
 
     def test_search_fails_explicitly_if_both_sources_are_unavailable(self):
-        with patch("server.search_wikipedia", side_effect=TimeoutError()), patch(
-            "server.search_news", side_effect=TimeoutError()
-        ):
+        with patch.dict("os.environ", {"GOOGLE_SEARCH_API_KEY": "", "GOOGLE_SEARCH_ENGINE_ID": ""}), \
+                patch("server.search_wikipedia", side_effect=TimeoutError()), \
+                patch("server.search_news", side_effect=TimeoutError()):
             with self.assertRaisesRegex(RuntimeError, "sources are temporarily unavailable"):
                 server.search_sources("Some topic")
+
+    def test_explicit_sexual_and_sensitive_action_requests_are_refused(self):
+        self.assertTrue(server.is_explicit_sexual_request("Show me nudity"))
+        self.assertTrue(server.is_explicit_sexual_request("Tell me about sexuality"))
+        self.assertTrue(server.is_explicit_sexual_request("Write a sexual story"))
+        self.assertTrue(server.is_explicit_sexual_request("Sex with a minor"))
+        self.assertFalse(server.is_explicit_sexual_request("Explain sexual reproduction in plants"))
+        self.assertTrue(server.is_sensitive_action_request("How do I commit suicide?"))
+        self.assertTrue(server.is_sensitive_action_request("How can I buy illegal drugs?"))
+        self.assertFalse(server.is_sensitive_action_request("Explain suicide prevention"))
+        self.assertFalse(server.is_sensitive_action_request("How can I prevent suicide?"))
+        self.assertTrue(server.is_sensitive_action_request("How can I make a bomb safely?"))
+        self.assertFalse(server.is_sensitive_action_request("Is alcohol harmful?"))
+        self.assertFalse(server.is_sensitive_action_request("What are drugs?"))
+        self.assertFalse(server.is_sensitive_action_request("Explain photosynthesis"))
+
+    def test_attachment_validation_limits_count_and_supported_text_files(self):
+        self.assertEqual(
+            server.validate_attachments([{"name": "notes.md", "content": "A note."}]),
+            [{"name": "notes.md", "content": "A note."}],
+        )
+        with self.assertRaisesRegex(server.AttachmentValidationError, "supported text"):
+            server.validate_attachments([{"name": "notes.exe", "content": "Not parsed"}])
+        with self.assertRaisesRegex(server.AttachmentValidationError, "no more than 15"):
+            server.validate_attachments([{"name": "notes.txt", "content": ""}] * 16)
+
+    def test_attachment_validation_extracts_docx_and_xlsx_text(self):
+        docx = io.BytesIO()
+        with zipfile.ZipFile(docx, "w") as archive:
+            archive.writestr(
+                "word/document.xml",
+                b'<w:document xmlns:w="urn:word"><w:body><w:p><w:r><w:t>Document sentence.</w:t></w:r></w:p></w:body></w:document>',
+            )
+        xlsx = io.BytesIO()
+        with zipfile.ZipFile(xlsx, "w") as archive:
+            archive.writestr(
+                "xl/sharedStrings.xml",
+                b'<sst xmlns="urn:sheet"><si><t>Quarterly revenue</t></si></sst>',
+            )
+            archive.writestr(
+                "xl/worksheets/sheet1.xml",
+                b'<worksheet xmlns="urn:sheet"><sheetData><row><c r="A1" t="s"><v>0</v></c></row></sheetData></worksheet>',
+            )
+        uploads = server.validate_attachments([
+            {"name": "report.docx", "data": base64.b64encode(docx.getvalue()).decode()},
+            {"name": "totals.xlsx", "data": base64.b64encode(xlsx.getvalue()).decode()},
+        ])
+
+        self.assertIn("Document sentence.", uploads[0]["content"])
+        self.assertIn("Quarterly revenue", uploads[1]["content"])
+
+    def test_image_upload_keeps_verified_image_data_for_gemini(self):
+        uploaded = server.validate_attachments([{
+            "name": "photo.png",
+            "data": base64.b64encode(b"\x89PNG\r\n\x1a\nimage").decode(),
+        }])
+
+        self.assertEqual(uploaded[0]["mimeType"], "image/png")
+        self.assertEqual(base64.b64decode(uploaded[0]["data"]), b"\x89PNG\r\n\x1a\nimage")
+
+    def test_pdf_upload_uses_bounded_text_extraction(self):
+        page = MagicMock()
+        page.extract_text.return_value = "Readable PDF paragraph."
+        reader = MagicMock()
+        reader.pages = [page]
+        with patch("pypdf.PdfReader", return_value=reader):
+            uploaded = server.validate_attachments([{
+                "name": "report.pdf",
+                "data": base64.b64encode(b"%PDF-1.7 placeholder").decode(),
+            }])
+
+        self.assertIn("Readable PDF paragraph.", uploaded[0]["content"])
+
+    def test_local_document_summary_uses_text_from_every_file(self):
+        result = server.summarize_documents([
+            {"name": "first.txt", "content": "A first distinct point. More context."},
+            {"name": "second.md", "content": "A second important point."},
+        ])
+        self.assertIn("A first distinct point.", result)
+        self.assertIn("A second important point.", result)
+
+    def test_search_query_removes_conversation_filler_and_corrects_ranking_typos(self):
+        self.assertEqual(
+            server.normalize_search_query("Can you write the story of cindrella?"),
+            "cindrella",
+        )
+        matches = server.rank_search_items("cindrella", [
+            {"title": "Unrelated article", "text": "Nothing relevant."},
+            {"title": "Cinderella", "text": "A traditional fairy tale."},
+        ])
+        self.assertEqual(matches[0]["title"], "Cinderella")
+        self.assertEqual(server.normalize_search_query("Is alcohol harmful?"), "alcohol health effects")
+        self.assertEqual(server.normalize_search_query("Is alcohol harmful or not?"), "alcohol health effects")
+        self.assertEqual(server.rank_search_items("What is this?", matches), [])
+        health_matches = server.rank_search_items("Is alcohol harmful?", [
+            {"title": "Alcohol laws in Germany", "text": "Rules for alcohol sale."},
+            {"title": "Health effects of alcohol", "text": "Harmful alcohol use causes health risks."},
+        ])
+        self.assertEqual(health_matches[0]["title"], "Health effects of alcohol")
+
+    def test_robo_identity_question_gets_a_direct_answer(self):
+        self.assertTrue(server.is_robo_identity_query("What are you?"))
+
+    def test_programming_request_detection_covers_natural_language_code_requests(self):
+        self.assertTrue(server.is_coding_request("Can you give me the code of printing hello world in python?"))
+        self.assertTrue(server.is_coding_request("Write Rust code to sort a list."))
+        self.assertFalse(server.is_coding_request("What is Python?"))
 
 
 class ServerEndpointTests(unittest.TestCase):
@@ -146,13 +294,30 @@ class ServerEndpointTests(unittest.TestCase):
             return error
 
     def test_health_reports_general_answer_configuration_without_exposing_key(self):
-        with patch.dict("os.environ", {"GEMINI_API_KEY": ""}):
+        with patch.dict("os.environ", {
+            "GEMINI_API_KEY": "",
+            "GOOGLE_SEARCH_API_KEY": "",
+            "GOOGLE_SEARCH_ENGINE_ID": "",
+        }):
             response = urlopen(self.base_url + "/api/health", timeout=3)
             health = json.loads(response.read())
 
         self.assertTrue(health["ok"])
-        self.assertEqual(health["mode"], "gemini-chat-public-news-search")
+        self.assertEqual(health["mode"], "gemini-chat-public-web-search")
         self.assertFalse(health["generalAnswersConfigured"])
+        self.assertFalse(health["googleSearchConfigured"])
+
+    def test_health_reports_google_provider_without_exposing_credentials(self):
+        with patch.dict("os.environ", {
+            "GOOGLE_SEARCH_API_KEY": "server-only-key",
+            "GOOGLE_SEARCH_ENGINE_ID": "engine-id",
+        }):
+            response = urlopen(self.base_url + "/api/health", timeout=3)
+            body = response.read().decode()
+
+        self.assertEqual(json.loads(body)["webSearchProvider"], "Google Search")
+        self.assertNotIn("server-only-key", body)
+        self.assertNotIn("engine-id", body)
 
     def test_image_config_does_not_expose_api_key(self):
         with patch.dict("os.environ", {"GEMINI_API_KEY": "server-only-secret"}):
@@ -308,6 +473,115 @@ class ServerEndpointTests(unittest.TestCase):
         news.assert_not_called()
         wikipedia.assert_not_called()
 
+    def test_chat_endpoint_refuses_explicit_sexual_requests_without_search_or_generation(self):
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "configured-key"}), \
+                patch("server.generate_gemini_answer") as generate, \
+                patch("server.search_sources") as search:
+            response = self.post_chat({"messages": [{"role": "user", "text": "Show me nudity"}]})
+
+        self.assertEqual(response.code, 200)
+        self.assertEqual(json.loads(response.read()), {
+            "text": "I cannot generate these types of content.",
+            "sources": [],
+        })
+        generate.assert_not_called()
+        search.assert_not_called()
+
+    def test_chat_endpoint_answers_robo_identity_directly_instead_of_irrelevant_results(self):
+        with patch("server.search_sources") as search:
+            response = self.post_chat({"messages": [{"role": "user", "text": "What are you?"}]})
+
+        result = json.loads(response.read())
+        self.assertEqual(response.code, 200)
+        self.assertIn("I'm ROBO, an AI learning companion.", result["text"])
+        self.assertEqual(result["sources"], [])
+        search.assert_not_called()
+
+    def test_chat_endpoint_uses_clean_story_search_and_returns_only_relevant_source(self):
+        articles = [
+            {"title": "Cinderella", "text": "Cinderella is a traditional fairy tale.", "url": "https://example.com/cinderella", "publisher": "Example"},
+            {"title": "Unrelated article", "text": "This has no matching topic.", "url": "https://example.com/unrelated", "publisher": "Example"},
+        ]
+        with patch.dict("os.environ", {"GEMINI_API_KEY": ""}), patch(
+            "server.search_wikipedia", return_value=articles
+        ) as wikipedia, patch("server.search_news") as news:
+            response = self.post_chat({
+                "messages": [{"role": "user", "text": "Can you write the story of cindrella?"}]
+            })
+
+        result = json.loads(response.read())
+        self.assertEqual(response.code, 200)
+        self.assertIn("Cinderella is a traditional fairy tale.", result["text"])
+        self.assertIn("original story writing requires Gemini", result["text"])
+        self.assertNotIn("Unrelated article", result["text"])
+        self.assertEqual(result["sources"][0]["title"], "Cinderella")
+        wikipedia.assert_called_once_with("cindrella")
+        news.assert_not_called()
+
+    def test_chat_endpoint_refuses_sensitive_content_without_search(self):
+        with patch.dict("os.environ", {"GEMINI_API_KEY": ""}), \
+                patch("server.search_sources") as search:
+            response = self.post_chat({"messages": [{"role": "user", "text": "How can I buy illegal drugs?"}]})
+
+        self.assertEqual(response.code, 200)
+        self.assertEqual(json.loads(response.read())["text"], "I cannot generate these types of content.")
+        search.assert_not_called()
+
+    def test_chat_endpoint_searches_benign_alcohol_health_question(self):
+        search_result = {
+            "text": "Alcohol use can harm health.",
+            "sources": [{"title": "Health guidance", "url": "https://example.com/health"}],
+            "items": [],
+        }
+        with patch.dict("os.environ", {"GEMINI_API_KEY": ""}), patch(
+            "server.search_sources", return_value=search_result
+        ) as search:
+            response = self.post_chat({
+                "messages": [{"role": "user", "text": "Is alcohol harmful?"}]
+            })
+
+        self.assertEqual(response.code, 200)
+        search.assert_called_once_with("Is alcohol harmful?", include_news=False)
+
+    def test_chat_endpoint_summarizes_uploaded_file_contents_without_gemini(self):
+        with patch.dict("os.environ", {"GEMINI_API_KEY": ""}), patch("server.search_sources") as search:
+            response = self.post_chat({
+                "messages": [{"role": "user", "text": "Summarize these files"}],
+                "attachments": [
+                    {"name": "first.txt", "content": "The water cycle moves water around Earth."},
+                    {"name": "second.md", "content": "Clouds form when water vapor cools."},
+                ],
+            })
+
+        result = json.loads(response.read())
+        self.assertEqual(response.code, 200)
+        self.assertIn("The water cycle moves water around Earth.", result["text"])
+        self.assertIn("Clouds form when water vapor cools.", result["text"])
+        search.assert_not_called()
+
+    def test_chat_endpoint_rejects_unsupported_uploaded_files(self):
+        response = self.post_chat({
+            "messages": [{"role": "user", "text": "Summarize this"}],
+            "attachments": [{"name": "report.exe", "content": "not parsed"}],
+        })
+
+        self.assertEqual(response.code, 400)
+        self.assertIn("supported text file", json.loads(response.read())["error"])
+
+    def test_chat_endpoint_passes_actual_upload_text_to_gemini(self):
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "configured-key"}), \
+                patch("server.generate_gemini_answer", return_value="Document summary.") as generate:
+            response = self.post_chat({
+                "messages": [{"role": "user", "text": "Summarize this file"}],
+                "attachments": [{"name": "notes.txt", "content": "A real file passage."}],
+            })
+
+        self.assertEqual(response.code, 200)
+        self.assertEqual(json.loads(response.read())["text"], "Document summary.")
+        self.assertEqual(generate.call_args.kwargs["attachments"], [
+            {"name": "notes.txt", "content": "A real file passage."},
+        ])
+
     def test_chat_endpoint_searches_news_only_for_current_news_requests(self):
         news_result = [{
             "title": "Science update",
@@ -356,10 +630,22 @@ class ServerEndpointTests(unittest.TestCase):
         wikipedia.assert_not_called()
 
     def test_chat_endpoint_uses_gemini_for_general_questions_and_code(self):
+        articles = [{
+            "title": "Python",
+            "text": "Python is a programming language.",
+            "url": "https://en.wikipedia.org/?curid=23862",
+            "publisher": "Wikipedia",
+        }]
+        news_results = [{
+            "title": "Python release news",
+            "text": "A recent release.",
+            "url": "https://news.example/python",
+            "publisher": "Example News",
+        }]
         with patch.dict("os.environ", {"GEMINI_API_KEY": "server-only-secret"}), \
                 patch("server.generate_gemini_answer", return_value="Here is the Python code.") as generate, \
-                patch("server.search_news") as news, \
-                patch("server.search_wikipedia") as wikipedia:
+                patch("server.search_news", return_value=news_results) as news, \
+                patch("server.search_wikipedia", return_value=articles) as wikipedia:
             response = self.post_chat({
                 "messages": [
                     {"role": "user", "text": "Write Python code that adds two numbers."},
@@ -367,15 +653,39 @@ class ServerEndpointTests(unittest.TestCase):
                     {"role": "user", "text": "Include input validation."},
                 ],
                 "responseStyle": "detailed",
+                "responseLanguage": "hi",
             })
 
         self.assertEqual(response.code, 200)
-        self.assertEqual(json.loads(response.read()), {"text": "Here is the Python code.", "sources": []})
-        passed_messages, response_style = generate.call_args.args
+        result = json.loads(response.read())
+        self.assertEqual(result["text"], "Here is the Python code.")
+        self.assertEqual(len(result["sources"]), 1)
+        passed_messages, response_style, passed_sources = generate.call_args.args
         self.assertEqual(passed_messages[-1]["text"], "Include input validation.")
         self.assertEqual(response_style, "detailed")
+        self.assertEqual(len(passed_sources), 1)
+        self.assertEqual(generate.call_args.kwargs["response_language"], "hi")
         news.assert_not_called()
-        wikipedia.assert_not_called()
+        wikipedia.assert_called_once_with("Write Python code that adds two numbers. Include input validation")
+
+    def test_chat_endpoint_reports_unconfigured_code_generation_instead_of_irrelevant_search(self):
+        with patch.dict("os.environ", {"GEMINI_API_KEY": ""}), patch("server.search_sources") as search:
+            response = self.post_chat({
+                "messages": [{"role": "user", "text": "Write Rust code to sort a list."}]
+            })
+
+        self.assertEqual(response.code, 503)
+        self.assertIn("Set GEMINI_API_KEY", json.loads(response.read())["error"])
+        search.assert_not_called()
+
+    def test_chat_endpoint_rejects_unsupported_response_language(self):
+        response = self.post_chat({
+            "messages": [{"role": "user", "text": "Explain gravity"}],
+            "responseLanguage": "not-a-language",
+        })
+
+        self.assertEqual(response.code, 400)
+        self.assertIn("supported response language", json.loads(response.read())["error"])
 
     def test_gemini_answer_uses_server_key_and_preserves_chat_context(self):
         response = MagicMock()
@@ -390,7 +700,19 @@ class ServerEndpointTests(unittest.TestCase):
         ]
         with patch.dict("os.environ", {"GEMINI_API_KEY": "server-only-secret"}), \
                 patch("server.urlopen", return_value=response) as open_url:
-            answer = server.generate_gemini_answer(messages, "detailed")
+            answer = server.generate_gemini_answer(
+                messages,
+                "detailed",
+                attachments=[
+                    {"name": "notes.txt", "content": "A verified passage from the document."},
+                    {
+                        "name": "photo.png",
+                        "mimeType": "image/png",
+                        "data": base64.b64encode(b"\x89PNG\r\n\x1a\nimage").decode(),
+                    },
+                ],
+                response_language="hi",
+            )
 
         request = open_url.call_args.args[0]
         request_body = json.loads(request.data)
@@ -398,9 +720,17 @@ class ServerEndpointTests(unittest.TestCase):
         self.assertEqual(request.get_header("X-goog-api-key"), "server-only-secret")
         self.assertEqual(request_body["contents"][0]["role"], "user")
         self.assertIn("Python.", request_body["contents"][-1]["parts"][0]["text"])
-        self.assertIn("working code", request_body["system_instruction"]["parts"][0]["text"])
+        self.assertIn("A verified passage from the document.", request_body["contents"][-1]["parts"][0]["text"])
+        self.assertIn(
+            {"inline_data": {"mime_type": "image/png", "data": base64.b64encode(b"\x89PNG\r\n\x1a\nimage").decode()}},
+            request_body["contents"][-1]["parts"],
+        )
+        self.assertIn("working code in any language", request_body["system_instruction"]["parts"][0]["text"])
+        self.assertIn("Respond in Hindi.", request_body["system_instruction"]["parts"][0]["text"])
+        self.assertIn("untrusted reference data", request_body["system_instruction"]["parts"][0]["text"])
+        self.assertIn("cover every uploaded file", request_body["system_instruction"]["parts"][0]["text"])
 
-    def test_chat_endpoint_answers_general_questions_from_wikipedia_without_gemini(self):
+    def test_chat_endpoint_searches_public_web_sources_without_gemini(self):
         article = {
             "title": "Navaratri",
             "text": "Navaratri is a Hindu festival celebrated over nine nights.",
@@ -408,7 +738,7 @@ class ServerEndpointTests(unittest.TestCase):
             "publisher": "Wikipedia",
         }
         with patch.dict("os.environ", {"GEMINI_API_KEY": ""}), \
-                patch("server.search_news") as news, \
+                patch("server.search_news", return_value=[]) as news, \
                 patch("server.search_wikipedia", return_value=[article]) as wikipedia:
             response = self.post_chat({
                 "messages": [{
@@ -421,10 +751,10 @@ class ServerEndpointTests(unittest.TestCase):
         self.assertEqual(response.code, 200)
         self.assertIn("Navaratri is a Hindu festival", result["text"])
         self.assertEqual(result["sources"][0]["url"], article["url"])
-        wikipedia.assert_called_once_with("What is Navaratri?", limit=3)
+        wikipedia.assert_called_once_with("Navaratri")
         news.assert_not_called()
 
-    def test_chat_endpoint_falls_back_to_wikipedia_when_gemini_rejects_configuration(self):
+    def test_chat_endpoint_falls_back_to_public_search_results_when_gemini_fails(self):
         article = {
             "title": "Navaratri",
             "text": "Navaratri is a Hindu festival celebrated over nine nights.",
@@ -435,21 +765,21 @@ class ServerEndpointTests(unittest.TestCase):
                 patch("server.generate_gemini_answer", side_effect=RuntimeError(
                     "ROBO's AI service rejected its server configuration."
                 )), \
-                patch("server.search_news") as news, \
+                patch("server.search_news", return_value=[]) as news, \
                 patch("server.search_wikipedia", return_value=[article]) as wikipedia:
             response = self.post_chat({"messages": [{"role": "user", "text": "Navaratri"}]})
 
         result = json.loads(response.read())
         self.assertEqual(response.code, 200)
-        self.assertIn("reference-based answer", result["text"])
+        self.assertIn("closest source-based answer", result["text"])
         self.assertIn("Navaratri is a Hindu festival", result["text"])
         self.assertEqual(result["sources"][0]["url"], article["url"])
-        wikipedia.assert_called_once_with("Navaratri", limit=3)
+        wikipedia.assert_called_once_with("Navaratri")
         news.assert_not_called()
 
-    def test_chat_endpoint_returns_wikipedia_search_link_when_no_article_matches(self):
+    def test_chat_endpoint_reports_no_search_matches_honestly(self):
         with patch.dict("os.environ", {"GEMINI_API_KEY": ""}), \
-                patch("server.search_news") as news, \
+                patch("server.search_news", return_value=[]) as news, \
                 patch("server.search_wikipedia", return_value=[]):
             response = self.post_chat({
                 "messages": [{
@@ -460,9 +790,8 @@ class ServerEndpointTests(unittest.TestCase):
 
         result = json.loads(response.read())
         self.assertEqual(response.code, 200)
-        self.assertIn("couldn't find a reliable encyclopedia match", result["text"])
-        self.assertIn("Search Wikipedia", result["sources"][0]["title"])
-        self.assertIn("quantum-powered", result["sources"][0]["url"])
+        self.assertIn("couldn't find matching results", result["text"])
+        self.assertEqual(result["sources"], [])
         news.assert_not_called()
 
     def test_chat_endpoint_validates_messages(self):

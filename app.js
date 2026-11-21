@@ -14,6 +14,24 @@ let animationPaused = false;
 let sceneRotation = { x: 7, y: -8 };
 let sceneDrag = null;
 let sendingMessage = false;
+let preparingMessage = false;
+let selectedFiles = [];
+const MAX_CHAT_FILES = 15;
+const MAX_CHAT_FILE_BYTES = 1024 * 1024;
+const MAX_CHAT_FILES_BYTES = 5 * 1024 * 1024;
+const CHAT_TEXT_FILE_EXTENSIONS = new Set([
+  "txt", "md", "csv", "json", "py", "js", "ts", "html", "css", "xml", "yaml", "yml",
+  "log", "sql", "toml", "ini", "c", "h", "cpp", "hpp", "java", "go", "rs", "sh", "ps1", "tex"
+]);
+const CHAT_FILE_EXTENSIONS = new Set([
+  ...CHAT_TEXT_FILE_EXTENSIONS, "pdf", "docx", "xlsx", "pptx", "odt", "ods", "odp", "rtf", "eml",
+  "png", "jpg", "jpeg", "webp", "gif", "mp3", "wav", "m4a", "flac", "ogg", "mp4", "mov", "webm", "mpeg", "mpg", "avi"
+]);
+const RESPONSE_LANGUAGES = new Set(["en", "hi", "bn", "mr", "ta", "te", "ur", "es", "fr", "de", "pt", "ar", "zh-CN", "ja", "ko", "ru"]);
+const EXPLICIT_SEXUAL_REQUEST = /\b(?:porn(?:ography)?|xxx|nsfw|hentai|lewd|incest|bestiality|erotic(?:a)?|sexualit(?:y|ies)|sexually explicit|sexual content|sexual (?:act|story|fantasy)|sex scene|explicit sexual|nude(?:s|ness)?|nudity|naked (?:person|people|woman|man|girl|boy|child|children|teen|teenager|body)|show (?:me )?(?:a )?(?:naked|nude)|topless (?:person|people|woman|man|girl|boy)|bare breasts|striptease|fetish|(?:underage|minor|child(?:ren)?|kid|teen(?:ager)?)\b.{0,40}\b(?:sex|sexual|porn|nude|naked|erotic)|(?:sex|sexual|porn|nude|naked|erotic)\b.{0,40}\b(?:underage|minor|child(?:ren)?|kid|teen(?:ager)?))\b/i;
+const SENSITIVE_ACTION_QUERY = /\b(?:(?:how (?:do|can) i|how to|steps? to|instructions? (?:to|for)|guide to|ways? to|where can i (?:buy|get|find)|i (?:want|plan|intend) to|make|build|create|use|take|buy|purchase|obtain|commit)\b.{0,80}\b(?:sex|sexual|nudity|nude|porn|suicide|self[- ]harm|drug(?:s)?|weapon(?:s)?|bomb|explosive|gun|firearm|violence|violent|alcohol|tobacco|gambling|kill (?:someone|a person)|hurt (?:someone|a person))\b|\b(?:i (?:want|plan|intend) to )?(?:kill|hurt|cut) myself\b)/i;
+const SAFE_SENSITIVE_INFORMATION = /\b(?:prevent(?:ion)?|health|harmful|risk(?:s)?|treatment|support|recovery|safety|avoid|quit|stop|effects?)\b/i;
+const SENSITIVE_DIRECT_ACTION = /\b(?:make|build|create|use|take|buy|purchase|obtain|commit|kill|hurt|cut)\b/i;
 const CHAT_GREETINGS = [
   "Hey there! What are we learning today?",
   "Hi! What would you like to explore?",
@@ -58,8 +76,9 @@ let conversations = loadStored(CHAT_STORAGE_KEY, []);
 let students = loadStored(STUDENTS_STORAGE_KEY, []);
 let authState = { signedIn: false, provider: "Guest", displayName: "Guest", email: "" };
 let oauthConfig = null;
-let settings = loadStored(SETTINGS_STORAGE_KEY, { theme: "light", responseStyle: "balanced", alarmSound: "classic" });
+let settings = loadStored(SETTINGS_STORAGE_KEY, { theme: "light", responseStyle: "balanced", responseLanguage: "en", alarmSound: "classic" });
 if (!ALARM_SOUNDS.some(sound => sound.id === settings.alarmSound)) settings.alarmSound = "classic";
+if (!RESPONSE_LANGUAGES.has(settings.responseLanguage)) settings.responseLanguage = "en";
 let timetableEntries = loadStored(TIMETABLE_STORAGE_KEY, DEFAULT_TIMETABLE);
 let alarmEntries = loadStored(ALARM_STORAGE_KEY, [
   { id: "alarm-1", when: "2026-11-11T07:30", label: "Wake-up review", ringing: false },
@@ -254,6 +273,12 @@ function renderConversation() {
     text.className = "message-text";
     text.textContent = message.text;
     bubble.append(text);
+    if (message.role === "user" && Array.isArray(message.fileNames) && message.fileNames.length) {
+      const files = document.createElement("div");
+      files.className = "message-attachments";
+      files.textContent = `Attached: ${message.fileNames.join(", ")}`;
+      bubble.append(files);
+    }
     const hasGeneratedImage = typeof message.imageData === "string" || (typeof message.imageSvg === "string" && message.imageSvg.startsWith("<svg "));
     if (hasGeneratedImage) {
       const artwork = document.createElement("div");
@@ -512,7 +537,53 @@ function showChatStatus(message, retry = false, retryAction = () => requestAnswe
   container.scrollTop = container.scrollHeight;
 }
 
-async function requestAnswer(conversation) {
+function renderSelectedFiles() {
+  const container = document.querySelector("#selected-files");
+  container.replaceChildren();
+  container.hidden = selectedFiles.length === 0;
+  selectedFiles.forEach((file, index) => {
+    const item = document.createElement("span");
+    item.className = "selected-file";
+    const name = document.createElement("span");
+    name.textContent = file.name;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "×";
+    remove.setAttribute("aria-label", `Remove ${file.name}`);
+    remove.addEventListener("click", () => {
+      selectedFiles.splice(index, 1);
+      renderSelectedFiles();
+    });
+    item.append(name, remove);
+    container.append(item);
+  });
+}
+
+async function readSelectedFiles() {
+  const files = [];
+  for (const file of selectedFiles) {
+    const extension = file.name.split(".").pop().toLowerCase();
+    const data = await file.arrayBuffer();
+    if (!CHAT_TEXT_FILE_EXTENSIONS.has(extension)) {
+      const bytes = new Uint8Array(data);
+      let binary = "";
+      for (let offset = 0; offset < bytes.length; offset += 0x4000) {
+        binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x4000));
+      }
+      files.push({ name: file.name, data: btoa(binary) });
+      continue;
+    }
+    try {
+      const content = new TextDecoder("utf-8", { fatal: true }).decode(data);
+      files.push({ name: file.name, content });
+    } catch (error) {
+      throw new Error(`${file.name} is not readable UTF-8 text.`);
+    }
+  }
+  return files;
+}
+
+async function requestAnswer(conversation, attachments = []) {
   if (sendingMessage || !conversation) return;
   sendingMessage = true;
   const sendButton = document.querySelector("#send-chat");
@@ -524,8 +595,13 @@ async function requestAnswer(conversation) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        messages: conversation.messages.slice(-20).map(({ role, text }) => ({ role, text })),
-        responseStyle: settings.responseStyle
+        messages: conversation.messages.slice(-20)
+          .filter(message => !message.localOnly)
+          .map(({ role, text }) => ({ role, text })),
+        responseStyle: settings.responseStyle,
+        responseLanguage: settings.responseLanguage,
+        responseLanguage: settings.responseLanguage,
+        attachments
       })
     });
     const result = await response.json();
@@ -546,30 +622,68 @@ async function requestAnswer(conversation) {
   } catch (error) {
     console.error("ROBO could not answer the message.", error);
     document.querySelectorAll(".chat-status").forEach(status => status.remove());
-    showChatStatus(error.message || "ROBO couldn't answer that question. Please try again.", true);
+    showChatStatus(error.message || "ROBO couldn't answer that question. Please try again.", true,
+      () => requestAnswer(conversation, attachments));
   } finally {
     sendingMessage = false;
     sendButton.disabled = false;
   }
 }
 
-async function sendMessage(text) {
-  const value = text.trim();
-  if (!value || sendingMessage) return;
+function appendLocalResponse(value, response) {
   if (!currentConversation()) {
     currentChatId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     conversations.unshift({ id: currentChatId, title: value.slice(0, 42), messages: [], updatedAt: Date.now() });
   }
   const conversation = currentConversation();
-  conversation.messages.push({ role: "user", text: value });
+  conversation.messages.push({ role: "user", text: value, localOnly: true });
+  conversation.messages.push({ role: "assistant", text: response, sources: [] });
   conversation.updatedAt = Date.now();
-  document.querySelector("#workspace-chat-input").value = "";
+  renderConversation();
+  saveConversations();
+}
+
+function isSensitiveActionRequest(value) {
+  return (!SAFE_SENSITIVE_INFORMATION.test(value) || SENSITIVE_DIRECT_ACTION.test(value)) &&
+    SENSITIVE_ACTION_QUERY.test(value);
+}
+
+async function sendMessage(text) {
+  const input = document.querySelector("#workspace-chat-input");
+  const value = text.trim() || (selectedFiles.length ? "Please summarize the uploaded files." : "");
+  if ((!value && !selectedFiles.length) || sendingMessage || preparingMessage) return;
+  if (EXPLICIT_SEXUAL_REQUEST.test(value) || isSensitiveActionRequest(value)) {
+    input.value = "";
+    appendLocalResponse(value, "I cannot generate these types of content.");
+    return;
+  }
+  preparingMessage = true;
+  let attachments;
+  try {
+    attachments = await readSelectedFiles();
+  } catch (error) {
+    showToast(error.message || "The selected files could not be read.");
+    preparingMessage = false;
+    return;
+  }
+  const fileNames = attachments.map(file => file.name);
+  selectedFiles = [];
+  renderSelectedFiles();
+  preparingMessage = false;
+  if (!currentConversation()) {
+    currentChatId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    conversations.unshift({ id: currentChatId, title: value.slice(0, 42), messages: [], updatedAt: Date.now() });
+  }
+  const conversation = currentConversation();
+  conversation.messages.push({ role: "user", text: value, ...(fileNames.length ? { fileNames } : {}) });
+  conversation.updatedAt = Date.now();
+  input.value = "";
   const imagePrompt = getImagePrompt(value);
-  if (imagePrompt) {
+  if (imagePrompt && !attachments.length) {
     createIllustration(conversation, imagePrompt);
     return;
   }
-  if (/\b(?:create|make|generate|draw)\b/i.test(value) && /\b(?:image|picture|illustration|drawing|artwork|art)\b/i.test(value) &&
+  if (!attachments.length && /\b(?:create|make|generate|draw)\b/i.test(value) && /\b(?:image|picture|illustration|drawing|artwork|art)\b/i.test(value) &&
       /\b(?:as i describe|as i tell you|for me)\b/i.test(value) && !/\b(?:of|with|wearing|showing|depicting|featuring)\b/i.test(value)) {
     conversation.messages.push({
       role: "assistant",
@@ -580,7 +694,7 @@ async function sendMessage(text) {
     saveConversations();
     return;
   }
-  if (/^(hi|hello|hey|hiya|good morning|good afternoon|good evening)[!.?,\s]*$/i.test(value)) {
+  if (!attachments.length && /^(hi|hello|hey|hiya|good morning|good afternoon|good evening)[!.?,\s]*$/i.test(value)) {
     conversation.messages.push({ role: "assistant", text: "Hello! How can I help you today?" });
     conversation.updatedAt = Date.now();
     renderConversation();
@@ -589,7 +703,7 @@ async function sendMessage(text) {
   }
   renderConversation();
   saveConversations();
-  await requestAnswer(conversation);
+  await requestAnswer(conversation, attachments);
 }
 
 function applyTheme() {
@@ -1175,6 +1289,39 @@ document.querySelector("#workspace-chat-form").addEventListener("submit", event 
   event.preventDefault();
   sendMessage(document.querySelector("#workspace-chat-input").value);
 });
+document.querySelector("#attach-files").addEventListener("click", () => {
+  document.querySelector("#chat-file-input").click();
+});
+document.querySelector("#chat-file-input").addEventListener("change", event => {
+  const input = event.currentTarget;
+  const incoming = Array.from(input.files || []);
+  input.value = "";
+  const existing = new Set(selectedFiles.map(file => `${file.name}:${file.size}:${file.lastModified}`));
+  const additions = incoming.filter(file => !existing.has(`${file.name}:${file.size}:${file.lastModified}`));
+  if (selectedFiles.length + additions.length > MAX_CHAT_FILES) {
+    showToast(`You can attach up to ${MAX_CHAT_FILES} files.`);
+    return;
+  }
+  for (const file of additions) {
+    const extension = file.name.split(".").pop().toLowerCase();
+    if (!CHAT_FILE_EXTENSIONS.has(extension)) {
+      showToast(`${file.name} is not a supported document, image, or text file.`);
+      return;
+    }
+    if (file.size > MAX_CHAT_FILE_BYTES) {
+      showToast(`${file.name} is larger than the 1 MB per-file limit.`);
+      return;
+    }
+  }
+  const totalBytes = selectedFiles.reduce((sum, file) => sum + file.size, 0) +
+    additions.reduce((sum, file) => sum + file.size, 0);
+  if (totalBytes > MAX_CHAT_FILES_BYTES) {
+    showToast("The combined file size must be no more than 5 MB.");
+    return;
+  }
+  selectedFiles.push(...additions);
+  renderSelectedFiles();
+});
 document.querySelector("#workspace-chat-input").addEventListener("keydown", event => {
   if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();
@@ -1225,6 +1372,12 @@ document.querySelectorAll('input[name="response-style"]').forEach(input => {
     settings.responseStyle = input.value;
     saveStored(SETTINGS_STORAGE_KEY, settings);
   });
+});
+const responseLanguage = document.querySelector("#settings-response-language");
+responseLanguage.value = settings.responseLanguage;
+responseLanguage.addEventListener("change", () => {
+  settings.responseLanguage = responseLanguage.value;
+  saveStored(SETTINGS_STORAGE_KEY, settings);
 });
 document.querySelector("#student-form").addEventListener("submit", event => {
   event.preventDefault();

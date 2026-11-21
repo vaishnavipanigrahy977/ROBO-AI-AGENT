@@ -187,11 +187,12 @@ h2 { font-size: 24px; line-height: 1.25; margin: 5px 0 0; font-weight: 700; }
 .starter-prompts button span { color: var(--green); }
 .conversation-messages { width: 100%; flex: 1; min-height: 0; overflow-y: auto; padding: 5px 0 18px; }
 .message-row { width: min(100%, 720px); margin: 0 auto 23px; }
-.message-row.user-message { display: flex; justify-content: flex-end; }
+.message-row.user-message { display: grid; justify-items: end; }
 .message-row.assistant-message { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 11px; align-items: start; }
 .message-avatar { width: 28px; height: 28px; border-radius: 9px; font-size: 12px; }
 .message-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); font-size: 13px; line-height: 1.75; }
 .user-message .message-text { max-width: min(85%, 510px); padding: 11px 15px; border-radius: 17px 17px 4px 17px; background: var(--mint); color: var(--ink); }
+.message-attachments { max-width: 85%; margin-top: 5px; color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
 .assistant-message .message-text { padding-top: 3px; }
 .chat-launch { width: fit-content; grid-column: 2; }
 .generated-artwork { grid-column: 2; width: min(100%, 520px); margin-top: 10px; overflow: hidden; border: 1px solid var(--line); border-radius: 15px; background: var(--white); box-shadow: 0 8px 26px #18372a12; }
@@ -206,8 +207,16 @@ h2 { font-size: 24px; line-height: 1.25; margin: 5px 0 0; font-weight: 700; }
 .workspace-composer textarea::placeholder { color: #929d96; }
 .composer-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding-top: 5px; }
 .composer-actions button { width: 31px; height: 31px; border: 0; border-radius: 10px; background: var(--green); color: white; font-size: 18px; cursor: pointer; }
+.composer-actions .attach-files-button { margin-right: auto; border: 1px solid var(--line); background: transparent; color: var(--green-dark); font-size: 22px; }
 .composer-actions button:hover { background: var(--green-dark); }
+.composer-actions .attach-files-button:hover { background: var(--paper); }
 .composer-actions button:disabled { opacity: .55; cursor: wait; }
+.selected-files { display: flex; flex-wrap: wrap; gap: 7px; padding: 5px 3px 8px; }
+.selected-files[hidden] { display: none; }
+.selected-file { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; padding: 5px 7px 5px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink); font-size: 10px; }
+.selected-file span { overflow: hidden; max-width: 210px; white-space: nowrap; text-overflow: ellipsis; }
+.selected-file button { width: 19px; height: 19px; border: 0; border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer; }
+.selected-file button:hover { background: var(--line); color: var(--ink); }
 .chat-status { width: min(100%, 720px); margin: 0 auto 15px 40px; display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 11px; }
 .chat-error { color: #a64b45; }
 .chat-status button { border: 1px solid var(--line); border-radius: 7px; padding: 5px 9px; background: var(--white); color: var(--ink); font-size: 10px; cursor: pointer; }
