@@ -32,7 +32,52 @@ const CHAT_TEXT_FILE_NAMES = new Set([
   ".gitignore", ".dockerignore", ".gitattributes", ".gitmodules", ".npmrc", ".editorconfig",
   "dockerfile", "makefile", "procfile", "license", "readme"
 ]);
-const RESPONSE_LANGUAGES = new Set(["en", "hi", "bn", "mr", "ta", "te", "ur", "es", "fr", "de", "pt", "ar", "zh-CN", "ja", "ko", "ru"]);
+const LANGUAGE_CODES = (
+  "aa ab ae af ak am an ar as av ay az ba be bg bh bi bm bn bo br bs ca ce ch co cr cs cu cv cy " +
+  "da de dv dz ee el en eo es et eu fa ff fi fj fo fr fy ga gd gl gn gu gv ha he hi ho hr ht hu hy hz " +
+  "ia id ie ig ii ik io is it iu ja jv ka kg ki kj kk kl km kn ko kr ks ku kv kw ky la lb lg li ln lo " +
+  "lt lu lv mg mh mi mk ml mn mr ms mt my na nb nd ne ng nl nn no nr nv ny oc oj om or os pa pi pl " +
+  "ps pt qu rm rn ro ru rw sa sc sd se sg si sk sl sm sn so sq sr ss st su sv sw ta te tg th ti tk tl " +
+  "tn to tr ts tt tw ty ug uk ur uz ve vi vo wa wo xh yi yo za zh"
+).split(" ");
+const LANGUAGE_ENGLISH_FALLBACK = {
+  aa: "Afar", ab: "Abkhazian", ae: "Avestan", av: "Avaric", ba: "Bashkir", ak: "Akan",
+  bi: "Bislama", bo: "Tibetan", ce: "Chechen", ch: "Chamorro", cr: "Cree",
+  cu: "Church Slavic", cv: "Chuvash", dz: "Dzongkha", ff: "Fulah", fj: "Fijian",
+  gv: "Manx", ho: "Hiri Motu", hz: "Herero", ie: "Interlingue", ii: "Sichuan Yi",
+  ik: "Inupiaq", io: "Ido", kg: "Kongo", ki: "Kikuyu", kj: "Kuanyama",
+  kl: "Kalaallisut", kr: "Kanuri", ks: "Kashmiri", kv: "Komi", kw: "Cornish",
+  li: "Limburgan", lu: "Luba-Katanga", mh: "Marshallese", na: "Nauru",
+  nd: "North Ndebele", ng: "Ndonga", nr: "South Ndebele", nv: "Navajo",
+  oj: "Ojibwa", os: "Ossetian", pi: "Pali", rn: "Rundi", sc: "Sardinian",
+  se: "Northern Sami", sg: "Sango", ss: "Swati", ty: "Tahitian", ve: "Venda",
+  vo: "Volapük", za: "Zhuang"
+};
+const LANGUAGE_ENGLISH_OVERRIDES = { tw: "Twi" };
+const LANGUAGE_ALIASES = new Map([
+  ["en", "English"], ["hi", "Hindi"], ["bn", "Bengali"], ["mr", "Marathi"],
+  ["ta", "Tamil"], ["te", "Telugu"], ["ur", "Urdu"], ["es", "Spanish"],
+  ["fr", "French"], ["de", "German"], ["pt", "Portuguese"], ["ar", "Arabic"],
+  ["zh-CN", "Chinese (Simplified)"], ["ja", "Japanese"], ["ko", "Korean"], ["ru", "Russian"]
+]);
+const LANGUAGE_NAME_TO_CODE = new Map();
+const RTL_LANGUAGE_NAMES = new Set([
+  "Arabic", "Divehi", "Hebrew", "Kashmiri", "Pashto", "Persian", "Sindhi", "Urdu", "Uyghur", "Yiddish"
+]);
+const TRANSLATION_CACHE_KEY = "robo-ui-translations-v1";
+const UI_TRANSLATION_BATCH_SIZE = 140;
+const UI_TRANSLATION_BATCH_CHARS = 22000;
+const UI_TRANSLATION_EXCLUDED = [
+  "script", "style", "noscript", "code", "pre", "textarea", "input", "svg",
+  ".conversation-messages", ".selected-files", ".robo-toast", ".robo-splash-screen",
+  ".student-list", "#timetable-grid", "#schedule-list", "#alarm-list",
+  "[data-user-content='true']", "[contenteditable='true']"
+].join(",");
+const UI_TRANSLATION_ATTRIBUTE_EXCLUDED = [
+  "script", "style", "noscript", "svg", ".conversation-messages", ".selected-files",
+  ".robo-toast", ".robo-splash-screen", ".student-list", "#timetable-grid",
+  "#schedule-list", "#alarm-list", "[data-user-content='true']", "[contenteditable='true']"
+].join(",");
 const EXPLICIT_SEXUAL_REQUEST = /\b(?:porn(?:ography)?|xxx|nsfw|hentai|lewd|incest|bestiality|erotic(?:a)?|sexualit(?:y|ies)|sexually explicit|sexual content|sexual (?:act|story|fantasy)|sex scene|explicit sexual|nude(?:s|ness)?|nudity|naked (?:person|people|woman|man|girl|boy|child|children|teen|teenager|body)|show (?:me )?(?:a )?(?:naked|nude)|topless (?:person|people|woman|man|girl|boy)|bare breasts|striptease|fetish|(?:underage|minor|child(?:ren)?|kid|teen(?:ager)?)\b.{0,40}\b(?:sex|sexual|porn|nude|naked|erotic)|(?:sex|sexual|porn|nude|naked|erotic)\b.{0,40}\b(?:underage|minor|child(?:ren)?|kid|teen(?:ager)?))\b/i;
 const SENSITIVE_ACTION_QUERY = /\b(?:(?:how (?:do|can) i|how to|steps? to|instructions? (?:to|for)|guide to|ways? to|where can i (?:buy|get|find)|i (?:want|plan|intend) to|make|build|create|use|take|buy|purchase|obtain|commit)\b.{0,80}\b(?:sex|sexual|nudity|nude|porn|suicide|self[- ]harm|drug(?:s)?|weapon(?:s)?|bomb|explosive|gun|firearm|violence|violent|alcohol|tobacco|gambling|kill (?:someone|a person)|hurt (?:someone|a person))\b|\b(?:i (?:want|plan|intend) to )?(?:kill|hurt|cut) myself\b)/i;
 const SAFE_SENSITIVE_INFORMATION = /\b(?:prevent(?:ion)?|health|harmful|risk(?:s)?|treatment|support|recovery|safety|avoid|quit|stop|effects?)\b/i;
@@ -45,21 +90,21 @@ const CHAT_GREETINGS = [
   "Hey! What shall we figure out together?"
 ];
 const CHAT_GREETING_RESPONSES = {
-  hi: "नमस्ते! आज मैं आपकी कैसे मदद कर सकता हूँ?",
-  bn: "হ্যালো! আজ আমি আপনাকে কীভাবে সাহায্য করতে পারি?",
-  mr: "नमस्कार! आज मी तुमची कशी मदत करू शकतो?",
-  ta: "வணக்கம்! இன்று நான் உங்களுக்கு எப்படி உதவலாம்?",
-  te: "హలో! ఈరోజు నేను మీకు ఎలా సహాయపడగలను?",
-  ur: "السلام علیکم! آج میں آپ کی کیا مدد کر سکتا ہوں؟",
-  es: "¡Hola! ¿En qué puedo ayudarte hoy?",
-  fr: "Bonjour ! Comment puis-je vous aider aujourd’hui ?",
-  de: "Hallo! Wie kann ich dir heute helfen?",
-  pt: "Olá! Como posso ajudar você hoje?",
-  ar: "مرحبًا! كيف يمكنني مساعدتك اليوم؟",
-  "zh-CN": "你好！今天我能为你做什么？",
-  ja: "こんにちは！今日はどのようなお手伝いができますか？",
-  ko: "안녕하세요! 오늘 무엇을 도와드릴까요?",
-  ru: "Здравствуйте! Чем я могу помочь сегодня?"
+  Hindi: "नमस्ते! आज मैं आपकी कैसे मदद कर सकता हूँ?",
+  Bengali: "হ্যালো! আজ আমি আপনাকে কীভাবে সাহায্য করতে পারি?",
+  Marathi: "नमस्कार! आज मी तुमची कशी मदत करू शकतो?",
+  Tamil: "வணக்கம்! இன்று நான் உங்களுக்கு எப்படி உதவலாம்?",
+  Telugu: "హలో! ఈరోజు నేను మీకు ఎలా సహాయపడగలను?",
+  Urdu: "السلام علیکم! آج میں آپ کی کیا مدد کر سکتا ہوں؟",
+  Spanish: "¡Hola! ¿En qué puedo ayudarte hoy?",
+  French: "Bonjour ! Comment puis-je vous aider aujourd’hui ?",
+  German: "Hallo! Wie kann ich dir heute helfen?",
+  Portuguese: "Olá! Como posso ajudar você hoje?",
+  Arabic: "مرحبًا! كيف يمكنني مساعدتك اليوم؟",
+  "Chinese (Simplified)": "你好！今天我能为你做什么？",
+  Japanese: "こんにちは！今日はどのようなお手伝いができますか？",
+  Korean: "안녕하세요! 오늘 무엇을 도와드릴까요?",
+  Russian: "Здравствуйте! Чем я могу помочь сегодня?"
 };
 let chatGreetingIndex = -1;
 const CHAT_STORAGE_KEY = "robo-chat-history-v1";
@@ -98,9 +143,26 @@ let conversations = loadStored(CHAT_STORAGE_KEY, []);
 let students = loadStored(STUDENTS_STORAGE_KEY, []);
 let authState = { signedIn: false, provider: "Guest", displayName: "Guest", email: "" };
 let oauthConfig = null;
-let settings = loadStored(SETTINGS_STORAGE_KEY, { theme: "light", responseStyle: "balanced", responseLanguage: "en", alarmSound: "classic" });
+let settings = loadStored(SETTINGS_STORAGE_KEY, { theme: "light", responseStyle: "balanced", responseLanguage: "English", alarmSound: "classic" });
 if (!ALARM_SOUNDS.some(sound => sound.id === settings.alarmSound)) settings.alarmSound = "classic";
-if (!RESPONSE_LANGUAGES.has(settings.responseLanguage)) settings.responseLanguage = "en";
+settings.responseLanguage = normalizeLanguageName(settings.responseLanguage);
+const originalUiText = new WeakMap();
+const originalUiAttributes = new WeakMap();
+const knownUiTranslations = new Set();
+const uiTranslationCache = new Map();
+const storedUiTranslations = loadStored(TRANSLATION_CACHE_KEY, {});
+if (storedUiTranslations && typeof storedUiTranslations === "object") {
+  for (const [language, entries] of Object.entries(storedUiTranslations)) {
+    if (!entries || typeof entries !== "object" || Array.isArray(entries)) continue;
+    const translations = new Map(Object.entries(entries).filter(([, value]) => typeof value === "string"));
+    uiTranslationCache.set(language, translations);
+    translations.forEach(value => knownUiTranslations.add(value.trim()));
+  }
+}
+let uiTranslationObserver = null;
+let uiTranslationObserverTimer = null;
+const pendingUiTranslations = new Map();
+let activeUiTranslation = 0;
 let timetableEntries = loadStored(TIMETABLE_STORAGE_KEY, DEFAULT_TIMETABLE);
 let alarmEntries = loadStored(ALARM_STORAGE_KEY, []);
 let activeClockMode = "alarm";
@@ -141,6 +203,340 @@ function saveStored(key, value) {
   } catch (error) {
     console.error(`Unable to save ${key} in this browser.`, error);
   }
+}
+
+function normalizeLanguageName(value) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw || raw.length > 64) return "English";
+  return LANGUAGE_ALIASES.get(raw) || raw;
+}
+
+function isValidLanguageName(value) {
+  return typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 64 &&
+    /^[\p{L}\p{M}][\p{L}\p{M} '’()-]*$/u.test(value) &&
+    value.trim().split(/\s+/).length <= 5;
+}
+
+function languageCodeForName(language) {
+  return LANGUAGE_NAME_TO_CODE.get(language.toLowerCase()) || "";
+}
+
+function populateLanguageOptions() {
+  const options = document.querySelector("#settings-response-language");
+  if (!options) return;
+  const englishNames = new Intl.DisplayNames(["en"], { type: "language" });
+  options.replaceChildren();
+  for (const code of LANGUAGE_CODES) {
+    let englishName;
+    let nativeName;
+    try {
+      englishName = englishNames.of(code);
+      nativeName = new Intl.DisplayNames([code], { type: "language" }).of(code);
+    } catch (error) {
+      console.warn(`ROBO could not load the display name for language ${code}.`, error);
+    }
+    englishName = LANGUAGE_ENGLISH_OVERRIDES[code] || englishName;
+    englishName = englishName && englishName !== code ? englishName : LANGUAGE_ENGLISH_FALLBACK[code];
+    if (!englishName) continue;
+    const option = document.createElement("option");
+    option.value = englishName;
+    option.textContent = nativeName && nativeName !== code && nativeName !== englishName
+      ? `${nativeName} — ${englishName}`
+      : englishName;
+    options.append(option);
+    LANGUAGE_NAME_TO_CODE.set(englishName.toLowerCase(), code);
+  }
+  for (const [code, name] of [
+    ["zh-Hans", "Chinese (Simplified)"],
+    ["zh-Hant", "Chinese (Traditional)"],
+    ["pt-BR", "Portuguese (Brazil)"],
+    ["pt-PT", "Portuguese (Portugal)"],
+    ["en-GB", "English (United Kingdom)"],
+    ["en-US", "English (United States)"]
+  ]) {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = name;
+    options.append(option);
+    LANGUAGE_NAME_TO_CODE.set(name.toLowerCase(), code);
+  }
+  const customOption = document.createElement("option");
+  customOption.value = "__custom__";
+  customOption.textContent = "Other language…";
+  options.append(customOption);
+  LANGUAGE_NAME_TO_CODE.set("english", "en");
+}
+
+function ensureLanguageOption(language) {
+  const select = document.querySelector("#settings-response-language");
+  if ([...select.options].some(option => option.value === language)) return;
+  const option = document.createElement("option");
+  option.value = language;
+  option.textContent = language;
+  select.add(option, select.options.length - 1);
+}
+
+function getUiTranslationCache(language) {
+  if (!uiTranslationCache.has(language)) uiTranslationCache.set(language, new Map());
+  return uiTranslationCache.get(language);
+}
+
+function saveUiTranslationCache(language) {
+  const current = getUiTranslationCache(language);
+  uiTranslationCache.delete(language);
+  uiTranslationCache.set(language, current);
+  while (uiTranslationCache.size > 3) {
+    uiTranslationCache.delete(uiTranslationCache.keys().next().value);
+  }
+  const serialized = Object.fromEntries(
+    [...uiTranslationCache].map(([name, entries]) => [name, Object.fromEntries(entries)])
+  );
+  saveStored(TRANSLATION_CACHE_KEY, serialized);
+}
+
+function hasTranslatableLetters(text) {
+  return /[\p{L}\p{M}]{2}/u.test(text);
+}
+
+function isUiTranslationExcluded(element, attribute = false) {
+  const selector = attribute ? UI_TRANSLATION_ATTRIBUTE_EXCLUDED : UI_TRANSLATION_EXCLUDED;
+  return Boolean(element?.closest(selector));
+}
+
+function collectUiTranslationTargets() {
+  const targets = [];
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (!node.nodeValue.trim() || !hasTranslatableLetters(node.nodeValue) ||
+          isUiTranslationExcluded(node.parentElement)) return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    }
+  });
+  let node;
+  while ((node = walker.nextNode())) {
+    const textNode = node;
+    const current = textNode.nodeValue;
+    let record = originalUiText.get(textNode);
+    if (!record) {
+      record = { value: current };
+      originalUiText.set(textNode, record);
+    } else if (current !== record.value && !knownUiTranslations.has(current.trim())) {
+      record.value = current;
+    }
+    const match = record.value.match(/^(\s*)([\s\S]*?\S)(\s*)$/);
+    if (!match || !hasTranslatableLetters(match[2])) continue;
+    targets.push({
+      key: match[2],
+      apply(value) {
+        const translated = `${match[1]}${value}${match[3]}`;
+        if (textNode.nodeValue !== translated) textNode.nodeValue = translated;
+      },
+      restore() {
+        if (textNode.nodeValue !== record.value) textNode.nodeValue = record.value;
+      }
+    });
+  }
+
+  const translatedAttributes = ["aria-label", "title", "placeholder", "alt", "label"];
+  document.body.querySelectorAll("*").forEach(element => {
+    if (isUiTranslationExcluded(element, true)) return;
+    let records = originalUiAttributes.get(element);
+    if (!records) {
+      records = new Map();
+      originalUiAttributes.set(element, records);
+    }
+    translatedAttributes.forEach(attribute => {
+      if (!element.hasAttribute(attribute)) return;
+      const current = element.getAttribute(attribute);
+      if (!current.trim() || !hasTranslatableLetters(current)) return;
+      let original = records.get(attribute);
+      if (original === undefined || (current !== original && !knownUiTranslations.has(current.trim()))) {
+        original = current;
+        records.set(attribute, original);
+      }
+      targets.push({
+        key: original.trim(),
+        apply(value) {
+          if (element.getAttribute(attribute) !== value) element.setAttribute(attribute, value);
+        },
+        restore() {
+          if (element.getAttribute(attribute) !== original) element.setAttribute(attribute, original);
+        }
+      });
+    });
+  });
+  const titleNode = document.querySelector("title")?.firstChild;
+  if (titleNode?.nodeType === Node.TEXT_NODE && titleNode.nodeValue.trim()) {
+    let record = originalUiText.get(titleNode);
+    if (!record) {
+      record = { value: titleNode.nodeValue };
+      originalUiText.set(titleNode, record);
+    } else if (titleNode.nodeValue !== record.value && !knownUiTranslations.has(titleNode.nodeValue.trim())) {
+      record.value = titleNode.nodeValue;
+    }
+    const key = record.value.trim();
+    targets.push({
+      key,
+      apply(value) { if (titleNode.nodeValue !== value) titleNode.nodeValue = value; },
+      restore() { if (titleNode.nodeValue !== record.value) titleNode.nodeValue = record.value; }
+    });
+  }
+  const description = document.querySelector('meta[name="description"]');
+  if (description?.content?.trim()) {
+    let records = originalUiAttributes.get(description);
+    if (!records) {
+      records = new Map();
+      originalUiAttributes.set(description, records);
+    }
+    let original = records.get("content");
+    if (original === undefined || (description.content !== original && !knownUiTranslations.has(description.content.trim()))) {
+      original = description.content;
+      records.set("content", original);
+    }
+    targets.push({
+      key: original.trim(),
+      apply(value) { if (description.content !== value) description.content = value; },
+      restore() { if (description.content !== original) description.content = original; }
+    });
+  }
+  return targets;
+}
+
+function translationChunks(strings) {
+  const chunks = [];
+  let chunk = [];
+  let length = 0;
+  for (const text of strings) {
+    if (text.length > 2_000) continue;
+    if (chunk.length >= UI_TRANSLATION_BATCH_SIZE || length + text.length > UI_TRANSLATION_BATCH_CHARS) {
+      if (chunk.length) chunks.push(chunk);
+      chunk = [];
+      length = 0;
+    }
+    chunk.push(text);
+    length += text.length;
+  }
+  if (chunk.length) chunks.push(chunk);
+  return chunks;
+}
+
+async function fetchUiTranslations(language, strings) {
+  const response = await fetch("/api/translate-ui", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ language, strings })
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || `ROBO returned HTTP ${response.status}.`);
+  if (!Array.isArray(result.translations) || result.translations.length !== strings.length ||
+      result.translations.some(text => typeof text !== "string" || !text.trim())) {
+    throw new Error("ROBO returned an incomplete website translation. Please try again.");
+  }
+  return result.translations;
+}
+
+function setDocumentLanguage(language) {
+  const code = languageCodeForName(language);
+  document.documentElement.lang = code || "und";
+  document.documentElement.dir = code && /^(ar|dv|fa|he|ps|ur|yi)(-|$)/.test(code) ||
+    RTL_LANGUAGE_NAMES.has(language) ? "rtl" : "ltr";
+}
+
+async function translateUiTargets(language, targets, requestId) {
+  const translationCache = getUiTranslationCache(language);
+  const pending = pendingUiTranslations.get(language) || new Set();
+  pendingUiTranslations.set(language, pending);
+  const needed = [...new Set(targets.map(target => target.key))]
+    .filter(text => !translationCache.has(text) && !pending.has(text) && text.length <= 2_000);
+  needed.forEach(text => pending.add(text));
+  try {
+    for (const chunk of translationChunks(needed)) {
+      const translations = await fetchUiTranslations(language, chunk);
+      if (requestId !== activeUiTranslation) return false;
+      chunk.forEach((text, index) => {
+        translationCache.set(text, translations[index]);
+        knownUiTranslations.add(translations[index].trim());
+      });
+    }
+    if (requestId !== activeUiTranslation) return false;
+    targets.forEach(target => {
+      const translation = translationCache.get(target.key);
+      if (translation) target.apply(translation);
+    });
+    saveUiTranslationCache(language);
+    return true;
+  } finally {
+    needed.forEach(text => pending.delete(text));
+    if (!pending.size) pendingUiTranslations.delete(language);
+  }
+}
+
+async function applyUiLanguage(language) {
+  const normalized = normalizeLanguageName(language);
+  if (!isValidLanguageName(normalized)) throw new Error("Enter a language name using letters and spaces.");
+  const requestId = ++activeUiTranslation;
+  const targets = collectUiTranslationTargets();
+  if (normalized.toLowerCase().startsWith("english")) {
+    targets.forEach(target => target.restore());
+    setDocumentLanguage("English");
+    settings.responseLanguage = normalized;
+    saveStored(SETTINGS_STORAGE_KEY, settings);
+    return true;
+  }
+  const success = await translateUiTargets(normalized, targets, requestId);
+  if (!success || requestId !== activeUiTranslation) return false;
+  setDocumentLanguage(normalized);
+  settings.responseLanguage = normalized;
+  saveStored(SETTINGS_STORAGE_KEY, settings);
+  return true;
+}
+
+let languageChangeSequence = 0;
+async function changeWebsiteLanguage(language) {
+  const status = document.querySelector("#language-translation-status");
+  const select = document.querySelector("#settings-response-language");
+  const sequence = ++languageChangeSequence;
+  status.textContent = `Translating the whole interface into ${language}…`;
+  try {
+    const applied = await applyUiLanguage(language);
+    if (sequence !== languageChangeSequence || !applied) return;
+    ensureLanguageOption(settings.responseLanguage);
+    select.value = settings.responseLanguage;
+    document.querySelector("#custom-language-row").hidden = true;
+    status.textContent = `The interface and ROBO's answers are now set to ${settings.responseLanguage}.`;
+  } catch (error) {
+    console.error("ROBO could not translate the website.", error);
+    if (sequence !== languageChangeSequence) return;
+    select.value = settings.responseLanguage;
+    status.textContent = `Website translation failed: ${error.message}`;
+    showToast(error.message || "ROBO could not translate the website. Please try again.");
+  }
+}
+
+function observeUiChanges() {
+  if (uiTranslationObserver || !document.body) return;
+  uiTranslationObserver = new MutationObserver(() => {
+    if (settings.responseLanguage.toLowerCase().startsWith("english")) return;
+    window.clearTimeout(uiTranslationObserverTimer);
+    uiTranslationObserverTimer = window.setTimeout(async () => {
+      try {
+        const targets = collectUiTranslationTargets();
+        await translateUiTargets(settings.responseLanguage, targets, activeUiTranslation);
+      } catch (error) {
+        console.error("ROBO could not translate new interface content.", error);
+        showToast(error.message || "ROBO could not translate new interface content.");
+      }
+    }, 250);
+  });
+  uiTranslationObserver.observe(document.body, {
+    childList: true,
+    subtree: true,
+    characterData: true,
+    attributes: true,
+    attributeFilter: ["aria-label", "title", "placeholder", "alt", "label"]
+  });
 }
 
 function escapeHtml(value) {
@@ -263,8 +659,47 @@ function renderHistory() {
   document.querySelector("#history-empty").hidden = visible.length > 0;
   document.querySelector("#history-empty").textContent = conversations.length ? "No chats match your search." : "Your conversations will show up here.";
   document.querySelector("#chat-history").innerHTML = visible.map(chat =>
-    `<button class="history-item${chat.id === currentChatId ? " selected" : ""}" type="button" data-chat-id="${escapeHtml(chat.id)}" title="${escapeHtml(chat.title)}">${escapeHtml(chat.title)}</button>`
+    `<div class="history-entry">
+      <button class="history-item${chat.id === currentChatId ? " selected" : ""}" type="button" data-open-chat-id="${escapeHtml(chat.id)}"><span data-user-content="true">${escapeHtml(chat.title)}</span></button>
+      <button class="history-menu-toggle" type="button" aria-label="Chat options" title="Chat options" aria-haspopup="menu" aria-expanded="false" aria-controls="chat-menu-${escapeHtml(chat.id)}">⋮</button>
+      <div class="history-menu" id="chat-menu-${escapeHtml(chat.id)}" role="menu" hidden>
+        <button type="button" role="menuitem" data-chat-action="rename" data-chat-id="${escapeHtml(chat.id)}">Rename chat</button>
+        <button type="button" role="menuitem" data-chat-action="delete" data-chat-id="${escapeHtml(chat.id)}">Delete chat</button>
+      </div>
+    </div>`
   ).join("");
+}
+
+function closeHistoryMenus() {
+  document.querySelectorAll(".history-menu").forEach(menu => { menu.hidden = true; });
+  document.querySelectorAll(".history-menu-toggle").forEach(button => button.setAttribute("aria-expanded", "false"));
+}
+
+function renameChat(chatId) {
+  const chat = conversations.find(item => item.id === chatId);
+  if (!chat) return;
+  const name = window.prompt("Rename chat:", chat.title);
+  if (name === null) return;
+  const trimmed = name.trim();
+  if (!trimmed) {
+    showToast("Chat name cannot be empty.");
+    return;
+  }
+  if (trimmed.length > 80) {
+    showToast("Chat names must be 80 characters or fewer.");
+    return;
+  }
+  chat.title = trimmed;
+  saveConversations();
+}
+
+function deleteChat(chatId) {
+  const chat = conversations.find(item => item.id === chatId);
+  if (!chat || !window.confirm(`Delete "${chat.title}"? This cannot be undone.`)) return;
+  conversations = conversations.filter(item => item.id !== chatId);
+  if (currentChatId === chatId) currentChatId = null;
+  saveConversations();
+  renderConversation();
 }
 
 function renderConversation() {
@@ -722,9 +1157,28 @@ async function sendMessage(text) {
     return;
   }
   if (!attachments.length && /^(hi|hello|hey|hiya|good morning|good afternoon|good evening)[!.?,\s]*$/i.test(value)) {
-    const greeting = settings.responseLanguage === "en"
-      ? "Hello! How can I help you today?"
-      : CHAT_GREETING_RESPONSES[settings.responseLanguage] || "Hello! How can I help you today?";
+    let greeting = CHAT_GREETING_RESPONSES[settings.responseLanguage];
+    if (!greeting && settings.responseLanguage.toLowerCase().startsWith("english")) {
+      greeting = "Hello! How can I help you today?";
+    }
+    if (!greeting) {
+      const greetingSource = "Hello! How can I help you today?";
+      const cachedGreeting = getUiTranslationCache(settings.responseLanguage).get(greetingSource);
+      if (cachedGreeting) {
+        greeting = cachedGreeting;
+      } else {
+        try {
+          [greeting] = await fetchUiTranslations(settings.responseLanguage, [greetingSource]);
+          getUiTranslationCache(settings.responseLanguage).set(greetingSource, greeting);
+          knownUiTranslations.add(greeting.trim());
+          saveUiTranslationCache(settings.responseLanguage);
+        } catch (error) {
+          showToast(error.message || "ROBO could not translate that greeting.");
+          input.value = value;
+          return;
+        }
+      }
+    }
     conversation.messages.push({ role: "assistant", text: greeting });
     conversation.updatedAt = Date.now();
     renderConversation();
@@ -1385,12 +1839,34 @@ document.querySelector(".dashboard-actions").addEventListener("click", event => 
 document.querySelector("#new-chat").addEventListener("click", createChat);
 document.querySelector("#robo-prompt").addEventListener("click", () => renderScene(explorations.find(item => item.featured)));
 document.querySelector("#chat-history").addEventListener("click", event => {
-  const button = event.target.closest("[data-chat-id]");
-  if (!button) return;
-  currentChatId = button.dataset.chatId;
-  setView("chat");
-  renderConversation();
-  renderHistory();
+  const menuToggle = event.target.closest(".history-menu-toggle");
+  if (menuToggle) {
+    const menu = document.getElementById(menuToggle.getAttribute("aria-controls"));
+    const shouldOpen = menu?.hidden;
+    closeHistoryMenus();
+    if (menu && shouldOpen) {
+      menu.hidden = false;
+      menuToggle.setAttribute("aria-expanded", "true");
+    }
+    return;
+  }
+  const action = event.target.closest("[data-chat-action]");
+  if (action) {
+    closeHistoryMenus();
+    if (action.dataset.chatAction === "rename") renameChat(action.dataset.chatId);
+    if (action.dataset.chatAction === "delete") deleteChat(action.dataset.chatId);
+    return;
+  }
+  const button = event.target.closest("[data-open-chat-id]");
+  if (button) {
+    currentChatId = button.dataset.openChatId;
+    setView("chat");
+    renderConversation();
+    renderHistory();
+  }
+});
+document.addEventListener("click", event => {
+  if (!event.target.closest(".history-entry")) closeHistoryMenus();
 });
 document.querySelector("#history-search").addEventListener("input", renderHistory);
 document.querySelectorAll(".nav-item").forEach(button => button.addEventListener("click", () => setView(button.dataset.view)));
@@ -1415,10 +1891,33 @@ document.querySelectorAll('input[name="response-style"]').forEach(input => {
   });
 });
 const responseLanguage = document.querySelector("#settings-response-language");
+populateLanguageOptions();
+ensureLanguageOption(settings.responseLanguage);
 responseLanguage.value = settings.responseLanguage;
 responseLanguage.addEventListener("change", () => {
-  settings.responseLanguage = responseLanguage.value;
-  saveStored(SETTINGS_STORAGE_KEY, settings);
+  if (responseLanguage.value === "__custom__") {
+    responseLanguage.value = settings.responseLanguage;
+    document.querySelector("#custom-language-row").hidden = false;
+    document.querySelector("#custom-language-input").focus();
+    return;
+  }
+  document.querySelector("#custom-language-row").hidden = true;
+  changeWebsiteLanguage(responseLanguage.value);
+});
+document.querySelector("#apply-custom-language").addEventListener("click", () => {
+  const customLanguage = normalizeLanguageName(document.querySelector("#custom-language-input").value);
+  if (!isValidLanguageName(customLanguage)) {
+    showToast("Enter a valid language name using letters and spaces.");
+    return;
+  }
+  ensureLanguageOption(customLanguage);
+  changeWebsiteLanguage(customLanguage);
+});
+document.querySelector("#custom-language-input").addEventListener("keydown", event => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    document.querySelector("#apply-custom-language").click();
+  }
 });
 document.querySelector("#student-form").addEventListener("submit", event => {
   event.preventDefault();
@@ -1760,6 +2259,7 @@ sceneFrame.addEventListener("pointermove", event => {
 sceneFrame.addEventListener("pointerup", () => { sceneDrag = null; });
 sceneFrame.addEventListener("pointercancel", () => { sceneDrag = null; });
 document.addEventListener("keydown", event => {
+  if (event.key === "Escape") closeHistoryMenus();
   if (event.key === "/" && !event.target.closest("input, textarea, [contenteditable=true]") && !exploreDialog.open && !signinDialog.open) {
     event.preventDefault();
     document.querySelector("#history-search").focus();
@@ -1783,6 +2283,15 @@ updateStopwatchDisplay();
 resetTimer();
 updateClock();
 updateAuthUi();
+observeUiChanges();
+if (!settings.responseLanguage.toLowerCase().startsWith("english")) {
+  applyUiLanguage(settings.responseLanguage).catch(error => {
+    console.error("ROBO could not restore the selected website language.", error);
+    showToast(error.message || "ROBO could not translate the website. Please try again.");
+  });
+} else {
+  setDocumentLanguage(settings.responseLanguage);
+}
 initializeAuth();
 setInterval(updateClock, 1000);
 setTimeout(hideSplashScreen, 1100);
