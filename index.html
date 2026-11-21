@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css?v=robo-icon-dark-theme">
+    <link rel="stylesheet" href="styles.css?v=robo-localization-2">
   </head>
   <body>
     <div id="robo-splash-screen" class="robo-splash-screen" aria-live="polite" aria-label="ROBO welcome screen">
@@ -48,7 +48,7 @@
       <main class="workspace">
         <header class="topbar">
           <button class="mobile-menu" id="mobile-menu" type="button" aria-label="Toggle navigation" aria-expanded="false">☰</button>
-          <div class="topbar-center"><span class="online-dot"></span> Public web + encyclopedia search</div>
+          <div class="topbar-center"><span class="online-dot"></span> Web search with source citations</div>
           <button class="profile-button" type="button" aria-label="Guest profile"><span>G</span><span class="profile-name">Guest</span></button>
         </header>
 
@@ -75,7 +75,7 @@
               <span class="robo-avatar welcome-avatar" aria-hidden="true"><img class="robo-icon" src="robo-icon.ico" alt=""></span>
               <p class="eyebrow">SEARCH THE OPEN WEB</p>
               <h1 id="chat-heading">Hello! How can I help you today?</h1>
-              <p class="chat-intro">Ask a question to search Wikipedia and current news. ROBO will show you the source links.</p>
+              <p class="chat-intro" id="chat-intro">Search the web and get answers with source links.</p>
               <div class="starter-prompts">
                 <button type="button" data-prompt="Tell me about the Freshwater Swamp Ecosystem"><span>♧</span> Explore the featured swamp</button>
                 <button type="button" data-prompt="Explain the discovery of penicillin"><span>✚</span> How was penicillin discovered?</button>
@@ -85,9 +85,14 @@
             <div class="conversation-messages" id="conversation-messages" aria-live="polite" aria-label="Conversation"></div>
             <div class="chat-composer-wrap">
               <form class="workspace-composer" id="workspace-chat-form">
-                <label class="sr-only" for="workspace-chat-input">Message ROBO</label>
-                <textarea id="workspace-chat-input" rows="1" placeholder="Ask ROBO a question..." autocomplete="off"></textarea>
-                <div class="composer-actions"><button type="submit" aria-label="Send message" id="send-chat">↑</button></div>
+                <label class="sr-only" id="chat-input-label" for="workspace-chat-input">Search the web</label>
+                <textarea id="workspace-chat-input" rows="1" placeholder="Search the web..." autocomplete="off"></textarea>
+                <input id="chat-file-input" type="file" multiple hidden>
+                <div id="selected-files" class="selected-files" aria-live="polite" hidden></div>
+                <div class="composer-actions">
+                  <button type="button" class="attach-files-button" id="attach-files" aria-label="Attach files" title="Attach up to 15 supported files">＋</button>
+                  <button type="submit" aria-label="Send message" id="send-chat">↑</button>
+                </div>
               </form>
             </div>
           </div>
@@ -299,6 +304,8 @@
         </section>
         <section class="utility-view app-view" id="settings-view" hidden>
           <div class="utility-card"><p class="eyebrow">PREFERENCES</p><h1>Settings</h1><p class="utility-description">Control how this ROBO demo looks and stores your work.</p>
+            <div class="setting-row"><label for="settings-response-language"><strong>Website and response language</strong><small>English is the default. Choose a language to translate the interface and ROBO's answers.</small><small id="language-translation-status" role="status" aria-live="polite"></small></label><select class="setting-action" id="settings-response-language"></select></div>
+            <div class="setting-row" id="custom-language-row" hidden><label for="custom-language-input"><strong>Other language</strong><small>Type any language name, including regional or local languages.</small></label><div class="custom-language-control"><input class="setting-action" id="custom-language-input" type="text" maxlength="64" autocomplete="off" placeholder="Type a language name"><button class="setting-action" id="apply-custom-language" type="button">Use language</button></div></div>
             <div class="setting-row"><span><strong>Appearance</strong><small>Switch between light and dark themes.</small></span><button class="setting-action" id="settings-theme" type="button">Dark theme</button></div>
             <div class="setting-row"><span><strong>Chat history</strong><small>Conversations are stored in this browser on this device.</small></span><button class="setting-action danger-action" id="clear-history" type="button">Clear history</button></div>
             <div class="setting-row"><span><strong>Google sign-in</strong><small>Account authentication is not configured in this demo.</small></span><button class="setting-action" id="settings-signin" type="button">Sign-in details</button></div>
@@ -371,6 +378,6 @@
     </dialog>
 
     <script src="explorations.js"></script>
-    <script src="app.js?v=robo-icon-dark-theme"></script>
+    <script src="app.js?v=robo-google-search-1"></script>
   </body>
 </html>

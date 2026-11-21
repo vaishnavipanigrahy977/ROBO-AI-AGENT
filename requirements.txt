@@ -1,1 +1,2 @@
-# ROBO uses Python's standard library; no external packages are required.
+pypdf>=5,<7
+Pillow>=11,<13
