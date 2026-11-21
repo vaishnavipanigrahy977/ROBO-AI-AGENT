@@ -1108,6 +1108,38 @@ def answer_from_wikipedia(query):
     return {"text": text, "sources": sources}
 
 
+def add_language_fallback_notice(answer, response_language, content_type="search"):
+    if response_language == "en":
+        return answer
+    notices = {
+        "search": {
+            "hi": "Gemini अभी उपलब्ध नहीं है; खोज परिणाम स्रोत की मूल भाषा में दिखाए जा रहे हैं।",
+            "bn": "Gemini এখন উপলভ্য নয়; অনুসন্ধানের ফলাফল উৎসের মূল ভাষায় দেখানো হচ্ছে।",
+            "mr": "Gemini सध्या उपलब्ध नाही; शोध परिणाम स्रोताच्या मूळ भाषेत दाखवले आहेत.",
+            "ta": "Gemini தற்போது கிடைக்கவில்லை; தேடல் முடிவுகள் மூலத்தின் அசல் மொழியில் காட்டப்படுகின்றன.",
+            "te": "Gemini ప్రస్తుతం అందుబాటులో లేదు; శోధన ఫలితాలు మూల భాషలో చూపబడుతున్నాయి.",
+            "ur": "Gemini فی الحال دستیاب نہیں؛ تلاش کے نتائج اصل ماخذ کی زبان میں دکھائے جا رہے ہیں۔",
+            "es": "Gemini no está disponible; los resultados se muestran en el idioma original de la fuente.",
+            "fr": "Gemini n’est pas disponible ; les résultats restent dans la langue originale des sources.",
+            "de": "Gemini ist derzeit nicht verfügbar; Suchergebnisse werden in der Originalsprache angezeigt.",
+            "pt": "Gemini não está disponível; os resultados são exibidos no idioma original das fontes.",
+            "ar": "Gemini غير متاح حاليًا؛ تظهر نتائج البحث بلغة المصدر الأصلية.",
+            "zh-CN": "Gemini 暂不可用，以下搜索结果保留来源的原始语言。",
+            "ja": "Geminiは現在利用できないため、検索結果は情報源の原文で表示されます。",
+            "ko": "현재 Gemini를 사용할 수 없어 검색 결과가 출처의 원래 언어로 표시됩니다.",
+            "ru": "Gemini сейчас недоступен; результаты поиска показаны на языке источника.",
+        },
+        "file": {
+            "zh-CN": "Gemini 暂不可用，以下文件摘要保留文件的原始语言。",
+        },
+    }
+    notice = notices.get(content_type, {}).get(
+        response_language,
+        "Gemini is unavailable; this content is shown in its original language.",
+    )
+    return {**answer, "text": f"{notice}\n\n{answer['text']}"}
+
+
 def generate_gemini_answer(
     messages,
     response_style="balanced",
@@ -1350,13 +1382,11 @@ class RoboHandler(SimpleHTTPRequestHandler):
                         response_language=response_language,
                     )
                     self.send_json(200, {"text": answer, "sources": []})
-                elif response_language == "en" and is_document_summary_request(query) and all(
+                elif is_document_summary_request(query) and all(
                     "content" in item for item in attachments
                 ):
-                    self.send_json(200, {
-                        "text": summarize_documents(attachments),
-                        "sources": [],
-                    })
+                    answer = {"text": summarize_documents(attachments), "sources": []}
+                    self.send_json(200, add_language_fallback_notice(answer, response_language, "file"))
                 else:
                     error = (
                         "The selected response language needs Gemini to translate and summarize file contents. "
@@ -1383,29 +1413,22 @@ class RoboHandler(SimpleHTTPRequestHandler):
                         )
                     except RuntimeError as error:
                         print(f"Gemini news summary failed; returning live headlines: {error}", flush=True)
-                        if response_language != "en":
-                            self.send_json(502, {
-                                "error": "ROBO could not generate the answer in your selected language. Please try again.",
-                            })
-                            return
-                        self.send_json(200, answer_from_news(
+                        answer = answer_from_news(
                             news,
                             "ROBO's AI summary is unavailable, so here are the latest news results I found:",
-                        ))
+                        )
+                        self.send_json(200, add_language_fallback_notice(answer, response_language))
                     else:
                         sources = [
                             {key: item[key] for key in ("title", "url", "publisher", "publishedAt") if item.get(key)}
                             for item in news
                         ]
                         self.send_json(200, {"text": answer, "sources": sources})
-                elif response_language != "en":
-                    self.send_json(503, {
-                        "error": "The selected response language needs Gemini to translate and answer from search results. "
-                        "GEMINI_API_KEY must be available to the server process; confirm it is set on the same Railway "
-                        "service/environment running server.py, then redeploy or restart.",
-                    })
                 else:
-                    self.send_json(200, answer_from_news(news))
+                    self.send_json(200, add_language_fallback_notice(
+                        answer_from_news(news),
+                        response_language,
+                    ))
                 return
 
             if is_robo_identity_query(query) and response_language == "en":
@@ -1439,20 +1462,12 @@ class RoboHandler(SimpleHTTPRequestHandler):
                     )
                 except RuntimeError as error:
                     print(f"Gemini answer failed; returning web search results: {error}", flush=True)
-                    if response_language != "en":
-                        self.send_json(502, {
-                            "error": "ROBO could not generate the answer in your selected language. Please try again.",
-                        })
-                        return
                     result = answer_from_web_search(query, search_result)
                     result["text"] = (
                         "ROBO's AI summary is temporarily unavailable, so here is the closest source-based answer.\n\n"
                         + result["text"]
                     )
-                    self.send_json(200, {
-                        "text": result["text"],
-                        "sources": result["sources"],
-                    })
+                    self.send_json(200, add_language_fallback_notice(result, response_language))
                 else:
                     self.send_json(200, {
                         "text": answer,
@@ -1460,14 +1475,10 @@ class RoboHandler(SimpleHTTPRequestHandler):
                     })
                 return
 
-            if response_language != "en":
-                    self.send_json(503, {
-                        "error": "The selected response language needs Gemini to translate and answer from search results. "
-                        "GEMINI_API_KEY must be available to the server process; confirm it is set on the same Railway "
-                        "service/environment running server.py, then redeploy or restart.",
-                    })
-                    return
-            self.send_json(200, answer_from_web_search(query, search_result))
+            self.send_json(200, add_language_fallback_notice(
+                answer_from_web_search(query, search_result),
+                response_language,
+            ))
         except AttachmentValidationError as error:
             self.send_json(400, {"error": str(error)})
         except (ValueError, UnicodeDecodeError):

@@ -44,6 +44,23 @@ const CHAT_GREETINGS = [
   "Welcome back! What can I help you discover?",
   "Hey! What shall we figure out together?"
 ];
+const CHAT_GREETING_RESPONSES = {
+  hi: "नमस्ते! आज मैं आपकी कैसे मदद कर सकता हूँ?",
+  bn: "হ্যালো! আজ আমি আপনাকে কীভাবে সাহায্য করতে পারি?",
+  mr: "नमस्कार! आज मी तुमची कशी मदत करू शकतो?",
+  ta: "வணக்கம்! இன்று நான் உங்களுக்கு எப்படி உதவலாம்?",
+  te: "హలో! ఈరోజు నేను మీకు ఎలా సహాయపడగలను?",
+  ur: "السلام علیکم! آج میں آپ کی کیا مدد کر سکتا ہوں؟",
+  es: "¡Hola! ¿En qué puedo ayudarte hoy?",
+  fr: "Bonjour ! Comment puis-je vous aider aujourd’hui ?",
+  de: "Hallo! Wie kann ich dir heute helfen?",
+  pt: "Olá! Como posso ajudar você hoje?",
+  ar: "مرحبًا! كيف يمكنني مساعدتك اليوم؟",
+  "zh-CN": "你好！今天我能为你做什么？",
+  ja: "こんにちは！今日はどのようなお手伝いができますか？",
+  ko: "안녕하세요! 오늘 무엇을 도와드릴까요?",
+  ru: "Здравствуйте! Чем я могу помочь сегодня?"
+};
 let chatGreetingIndex = -1;
 const CHAT_STORAGE_KEY = "robo-chat-history-v1";
 const SETTINGS_STORAGE_KEY = "robo-settings-v1";
@@ -704,9 +721,11 @@ async function sendMessage(text) {
     saveConversations();
     return;
   }
-  if (settings.responseLanguage === "en" && !attachments.length &&
-      /^(hi|hello|hey|hiya|good morning|good afternoon|good evening)[!.?,\s]*$/i.test(value)) {
-    conversation.messages.push({ role: "assistant", text: "Hello! How can I help you today?" });
+  if (!attachments.length && /^(hi|hello|hey|hiya|good morning|good afternoon|good evening)[!.?,\s]*$/i.test(value)) {
+    const greeting = settings.responseLanguage === "en"
+      ? "Hello! How can I help you today?"
+      : CHAT_GREETING_RESPONSES[settings.responseLanguage] || "Hello! How can I help you today?";
+    conversation.messages.push({ role: "assistant", text: greeting });
     conversation.updatedAt = Date.now();
     renderConversation();
     saveConversations();

@@ -717,16 +717,50 @@ class ServerEndpointTests(unittest.TestCase):
         self.assertIn("same Railway service", json.loads(response.read())["error"])
         search.assert_not_called()
 
-    def test_chat_endpoint_does_not_return_english_fallback_for_chinese_selection(self):
+    def test_chat_endpoint_returns_source_fallback_for_chinese_selection_without_gemini(self):
+        source = {
+            "title": "Photosynthesis",
+            "text": "Plants use light to convert carbon dioxide and water into sugars.",
+            "url": "https://example.com/photosynthesis",
+            "publisher": "Example",
+        }
         with patch.dict("os.environ", {"GEMINI_API_KEY": ""}), \
-                patch("server.search_sources", return_value={"items": [], "sources": []}) as search:
+                patch("server.search_sources", return_value={
+                    "items": [source],
+                    "sources": [source],
+                }) as search:
             response = self.post_chat({
                 "messages": [{"role": "user", "text": "What is photosynthesis?"}],
                 "responseLanguage": "zh-CN",
             })
 
-        self.assertEqual(response.code, 503)
-        self.assertIn("selected response language", json.loads(response.read())["error"])
+        result = json.loads(response.read())
+        self.assertEqual(response.code, 200)
+        self.assertIn("Gemini 暂不可用", result["text"])
+        self.assertIn("Plants use light", result["text"])
+        self.assertEqual(result["sources"][0]["url"], source["url"])
+        search.assert_called_once()
+
+    def test_chat_endpoint_answers_informational_suicide_question_without_refusal(self):
+        source = {
+            "title": "Suicide",
+            "text": "Suicide is the act of intentionally causing one's own death.",
+            "url": "https://example.com/suicide-information",
+            "publisher": "Example",
+        }
+        with patch.dict("os.environ", {"GEMINI_API_KEY": ""}), \
+                patch("server.search_sources", return_value={
+                    "items": [source],
+                    "sources": [source],
+                }) as search:
+            response = self.post_chat({
+                "messages": [{"role": "user", "text": "What is suicide?"}],
+            })
+
+        result = json.loads(response.read())
+        self.assertEqual(response.code, 200)
+        self.assertNotEqual(result["text"], "I cannot generate these types of content.")
+        self.assertIn("intentionally causing", result["text"])
         search.assert_called_once()
 
     def test_chat_endpoint_rejects_unsupported_response_language(self):
