@@ -927,6 +927,32 @@ def is_robo_identity_query(query):
     ))
 
 
+def is_story_request(query):
+    return bool(
+        re.search(r"\b(?:story|tale)\b", query, re.IGNORECASE)
+        and re.search(r"\b(?:tell|write|create|make|invent|share|read|give|show)\b", query, re.IGNORECASE)
+    )
+
+
+def offline_story_answer(query):
+    if not (
+        re.search(r"\bmonkeys?\b", query, re.IGNORECASE)
+        and re.search(r"\bcap[- ]?seller\b", query, re.IGNORECASE)
+    ):
+        return None
+    return (
+        "Here's a retelling of the traditional folktale. One warm afternoon, a cap seller "
+        "stopped beneath a tree and fell asleep. A group of curious monkeys climbed down, "
+        "took the colorful caps from his basket, and put them on their heads. When the seller "
+        "woke up, he looked everywhere for the missing caps. Then he noticed the monkeys "
+        "watching him from the branches, each wearing one. The seller scratched his head, "
+        "and the monkeys copied him. He tossed his own cap onto the ground in frustration. "
+        "The monkeys imitated him and tossed their caps down too. Quickly, the seller gathered "
+        "the caps, packed them into his basket, and continued on his way. The seller had solved "
+        "the problem by staying calm and noticing what the monkeys were doing."
+    )
+
+
 def is_coding_request(query):
     mentions_code = re.search(
         r"\b(?:code|program(?:ming)?|script|function|algorithm|debug|implementation)\b",
@@ -1361,6 +1387,12 @@ def generate_gemini_answer(
         "programming identifiers unchanged. "
         + style_guidance
     )
+    if messages and is_story_request(messages[-1]["text"]):
+        system_instruction += (
+            " When asked for a story, write a complete, engaging narrative rather than a search-results summary. "
+            "Retell named traditional stories in your own words, and never say a story cannot be answered merely "
+            "because web search found no matching results."
+        )
     if google_search:
         system_instruction += (
             " Search Google before answering factual questions. Base factual claims on the search results, "
@@ -1718,6 +1750,28 @@ class RoboHandler(SimpleHTTPRequestHandler):
                     self.send_json(503, {
                         "error": error,
                     })
+                return
+            if is_story_request(query):
+                if api_configured:
+                    try:
+                        answer = generate_gemini_answer(
+                            validated,
+                            payload.get("responseStyle"),
+                            response_language=response_language,
+                        )
+                    except RuntimeError as error:
+                        print(f"Gemini story generation failed: {error}", flush=True)
+                    else:
+                        self.send_json(200, {"text": answer, "sources": []})
+                        return
+                if response_language_name(response_language).lower().startswith("english"):
+                    answer = offline_story_answer(query)
+                    if answer:
+                        self.send_json(200, {"text": answer, "sources": []})
+                        return
+                self.send_json(503, {
+                    "error": "ROBO's story-generation service is unavailable. Please try again later."
+                })
                 return
             if news_request:
                 news = search_news(news_search_query(query))
