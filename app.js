@@ -21,6 +21,7 @@ let learnerFiles = [];
 let learnerBusy = false;
 let learnerSpeechSequence = 0;
 let learnerMouthTimers = [];
+let learnerMouthFallbackTimer = null;
 const MAX_CHAT_FILES = 15;
 const MAX_CHAT_FILE_BYTES = 1024 * 1024;
 const MAX_CHAT_FILES_BYTES = 5 * 1024 * 1024;
@@ -1101,6 +1102,25 @@ function stopLearnerSpeech() {
 function clearLearnerMouthTimers() {
   learnerMouthTimers.forEach(timer => window.clearTimeout(timer));
   learnerMouthTimers = [];
+  window.clearTimeout(learnerMouthFallbackTimer);
+  learnerMouthFallbackTimer = null;
+}
+
+function animateLearnerMouthFallback(text, sequence, index = 0) {
+  if (!text.length || sequence !== learnerSpeechSequence) return;
+  const stage = document.querySelector(".learner-stage");
+  const character = text[index % text.length].toLowerCase();
+  const isPunctuation = /[.,!?;:]/.test(character);
+  const isSpace = /\s/.test(character);
+  const viseme = isSpace || isPunctuation || /[pbm]/.test(character)
+    ? "closed"
+    : /[ou]/.test(character) ? "round" : /a/.test(character) ? "open" : "wide";
+  const duration = isPunctuation ? 160 : isSpace ? 85 : /[aeiouy]/.test(character) ? 82 : 58;
+  stage.dataset.viseme = viseme;
+  learnerMouthFallbackTimer = window.setTimeout(
+    () => animateLearnerMouthFallback(text, sequence, index + 1),
+    duration
+  );
 }
 
 function animateLearnerMouth(word, sequence) {
@@ -1169,13 +1189,17 @@ function speakLearnerText(text) {
     if (sequence !== learnerSpeechSequence) return;
     stage.classList.add("is-speaking");
     stage.dataset.viseme = "closed";
+    animateLearnerMouthFallback(text, sequence);
     document.querySelector("#learner-speaking-status").textContent = `${learnerTutor.name} is speaking.`;
   };
   utterance.onboundary = event => {
     if (sequence !== learnerSpeechSequence || !Number.isInteger(event.charIndex)) return;
     if (event.name && event.name !== "word") return;
     const word = text.slice(event.charIndex).match(/^[^\s.,!?;:()[\]{}]+/);
-    if (word) animateLearnerMouth(word[0].replace(/^['"“”]+|['"“”]+$/g, ""), sequence);
+    if (word) {
+      clearLearnerMouthTimers();
+      animateLearnerMouth(word[0].replace(/^['"“”]+|['"“”]+$/g, ""), sequence);
+    }
   };
   utterance.onend = () => {
     if (sequence === learnerSpeechSequence) stopLearnerAnimation();
