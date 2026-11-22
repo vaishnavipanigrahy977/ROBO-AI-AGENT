@@ -150,7 +150,7 @@ let authState = { signedIn: false, provider: "Guest", displayName: "Guest", emai
 let oauthConfig = null;
 let settings = loadStored(SETTINGS_STORAGE_KEY, { theme: "light", responseStyle: "balanced", responseLanguage: "English", alarmSound: "classic" });
 if (!ALARM_SOUNDS.some(sound => sound.id === settings.alarmSound)) settings.alarmSound = "classic";
-settings.responseLanguage = normalizeLanguageName(settings.responseLanguage);
+settings.responseLanguage = "English";
 const originalUiText = new WeakMap();
 const originalUiAttributes = new WeakMap();
 const knownUiTranslations = new Set();
@@ -2231,35 +2231,6 @@ document.querySelectorAll('input[name="response-style"]').forEach(input => {
     saveStored(SETTINGS_STORAGE_KEY, settings);
   });
 });
-const responseLanguage = document.querySelector("#settings-response-language");
-populateLanguageOptions();
-ensureLanguageOption(settings.responseLanguage);
-responseLanguage.value = settings.responseLanguage;
-responseLanguage.addEventListener("change", () => {
-  if (responseLanguage.value === "__custom__") {
-    responseLanguage.value = settings.responseLanguage;
-    document.querySelector("#custom-language-row").hidden = false;
-    document.querySelector("#custom-language-input").focus();
-    return;
-  }
-  document.querySelector("#custom-language-row").hidden = true;
-  changeWebsiteLanguage(responseLanguage.value);
-});
-document.querySelector("#apply-custom-language").addEventListener("click", () => {
-  const customLanguage = normalizeLanguageName(document.querySelector("#custom-language-input").value);
-  if (!isValidLanguageName(customLanguage)) {
-    showToast("Enter a valid language name using letters and spaces.");
-    return;
-  }
-  ensureLanguageOption(customLanguage);
-  changeWebsiteLanguage(customLanguage);
-});
-document.querySelector("#custom-language-input").addEventListener("keydown", event => {
-  if (event.key === "Enter") {
-    event.preventDefault();
-    document.querySelector("#apply-custom-language").click();
-  }
-});
 document.querySelector("#student-form").addEventListener("submit", event => {
   event.preventDefault();
   const name = document.querySelector("#student-name").value.trim();
@@ -2626,14 +2597,7 @@ updateClock();
 updateAuthUi();
 observeUiChanges();
 updateSearchProviderCopy();
-if (!settings.responseLanguage.toLowerCase().startsWith("english")) {
-  applyUiLanguage(settings.responseLanguage).catch(error => {
-    console.error("ROBO could not restore the selected website language.", error);
-    showToast(error.message || "ROBO could not translate the website. Please try again.");
-  });
-} else {
-  setDocumentLanguage(settings.responseLanguage);
-}
+setDocumentLanguage("English");
 initializeAuth();
 setInterval(updateClock, 1000);
 setTimeout(hideSplashScreen, 1100);
