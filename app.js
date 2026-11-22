@@ -19,8 +19,7 @@ let selectedFiles = [];
 let learnerTutor = null;
 let learnerFiles = [];
 let learnerBusy = false;
-let learnerSpeechTimer = null;
-let learnerMouthOpen = false;
+let learnerSpeechSequence = 0;
 let learnerRecognition = null;
 let learnerListening = false;
 const MAX_CHAT_FILES = 15;
@@ -1084,19 +1083,24 @@ function openTutorGenderDialog() {
   if (!dialog.open) dialog.showModal();
 }
 
+function stopLearnerAnimation() {
+  document.querySelector(".learner-stage").classList.remove("is-speaking");
+  document.querySelector("#learner-speaking-status").textContent = learnerTutor
+    ? `${learnerTutor.name} is ready. Click the microphone, then speak.`
+    : "Select Learner in the navigation to get started.";
+}
+
 function stopLearnerSpeech() {
+  learnerSpeechSequence += 1;
   if ("speechSynthesis" in window) window.speechSynthesis.cancel();
   if (learnerListening && learnerRecognition) learnerRecognition.abort();
   learnerListening = false;
-  document.querySelector("#learner-microphone").setAttribute("aria-pressed", "false");
-  document.querySelector("#learner-microphone").classList.remove("is-listening");
-  window.clearInterval(learnerSpeechTimer);
-  learnerSpeechTimer = null;
-  learnerMouthOpen = false;
-  document.querySelector(".learner-stage").classList.remove("is-speaking", "mouth-open");
-  document.querySelector("#learner-speaking-status").textContent = learnerTutor
-    ? `${learnerTutor.name} is ready.`
-    : "Select Learner in the navigation to get started.";
+  const microphone = document.querySelector("#learner-microphone");
+  microphone.setAttribute("aria-pressed", "false");
+  microphone.setAttribute("aria-label", "Start voice question");
+  microphone.title = "Click to start listening, then speak";
+  microphone.classList.remove("is-listening");
+  stopLearnerAnimation();
 }
 
 function addLearnerTranscript(speaker, text) {
@@ -1119,6 +1123,7 @@ function speakLearnerText(text) {
       "Voice playback is not available in this browser. You can read the Transcript.";
     return;
   }
+  const sequence = ++learnerSpeechSequence;
   window.speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   const languageCode = languageCodeForName(settings.responseLanguage);
@@ -1140,16 +1145,16 @@ function speakLearnerText(text) {
   if (voice || languageVoice) utterance.voice = voice || languageVoice;
   const stage = document.querySelector(".learner-stage");
   utterance.onstart = () => {
+    if (sequence !== learnerSpeechSequence) return;
     stage.classList.add("is-speaking");
     document.querySelector("#learner-speaking-status").textContent = `${learnerTutor.name} is speaking.`;
-    learnerSpeechTimer = window.setInterval(() => {
-      learnerMouthOpen = !learnerMouthOpen;
-      stage.classList.toggle("mouth-open", learnerMouthOpen);
-    }, 170);
   };
-  utterance.onend = () => stopLearnerSpeech();
+  utterance.onend = () => {
+    if (sequence === learnerSpeechSequence) stopLearnerAnimation();
+  };
   utterance.onerror = event => {
-    stopLearnerSpeech();
+    if (sequence !== learnerSpeechSequence) return;
+    stopLearnerAnimation();
     if (!["canceled", "interrupted"].includes(event.error)) {
       document.querySelector("#learner-speaking-status").textContent =
         "Voice playback stopped. The transcript is still available.";
@@ -1178,8 +1183,10 @@ function toggleLearnerListening() {
   recognition.onstart = () => {
     learnerListening = true;
     button.setAttribute("aria-pressed", "true");
+    button.setAttribute("aria-label", "Stop listening");
+    button.title = "Stop listening";
     button.classList.add("is-listening");
-    document.querySelector("#learner-speaking-status").textContent = "Listening…";
+    document.querySelector("#learner-speaking-status").textContent = "Listening… speak now.";
   };
   recognition.onresult = event => {
     const recognized = Array.from(event.results)
@@ -1202,10 +1209,12 @@ function toggleLearnerListening() {
   recognition.onend = () => {
     learnerListening = false;
     button.setAttribute("aria-pressed", "false");
+    button.setAttribute("aria-label", "Start voice question");
+    button.title = "Click to start listening, then speak";
     button.classList.remove("is-listening");
     const status = document.querySelector("#learner-speaking-status");
-    if (status.textContent === "Listening…") {
-      status.textContent = `${learnerTutor.name} is ready.`;
+    if (status.textContent.startsWith("Listening")) {
+      status.textContent = `${learnerTutor.name} is ready. Click the microphone to ask another question.`;
     }
   };
   learnerRecognition = recognition;
@@ -1214,7 +1223,7 @@ function toggleLearnerListening() {
   } catch (error) {
     console.error("ROBO could not start speech input.", error);
     document.querySelector("#learner-speaking-status").textContent =
-      "Speech input could not start. You can type to your tutor.";
+      "Speech input could not start. Check microphone access, or type to your tutor.";
   }
 }
 
@@ -1232,7 +1241,8 @@ function chooseLearnerTutor(gender) {
   portrait.dataset.tutorGender = gender;
   portrait.classList.toggle("has-portrait", gender !== "neutral");
   document.querySelector("#learner-tutor-name").textContent = learnerTutor.name;
-  document.querySelector("#learner-speaking-status").textContent = `${learnerTutor.name} is ready.`;
+  document.querySelector("#learner-speaking-status").textContent =
+    `${learnerTutor.name} is ready. Click the microphone, then speak, or type below.`;
   document.querySelector("#learner-gender-dialog").close();
   addLearnerTranscript(learnerTutor.name, learnerTutor.greeting);
   speakLearnerText(learnerTutor.greeting);
