@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css?v=robo-localization-2">
+    <link rel="stylesheet" href="styles.css?v=learner-tutor-2">
   </head>
   <body>
     <div id="robo-splash-screen" class="robo-splash-screen" aria-live="polite" aria-label="ROBO welcome screen">
@@ -31,6 +31,7 @@
           <button type="button" class="nav-item" data-view="students"><span aria-hidden="true">♙</span> Students</button>
           <button type="button" class="nav-item" data-view="image-generator"><span aria-hidden="true">▧</span> ROBO Generations</button>
           <button type="button" class="nav-item" data-view="scheduled"><span aria-hidden="true">◫</span> Scheduled</button>
+          <button type="button" class="nav-item" data-view="learner"><span aria-hidden="true">✦</span> Learner</button>
           <button type="button" class="nav-item" data-view="customize"><span aria-hidden="true">✳</span> Customize</button>
           <button type="button" class="nav-item" data-view="settings"><span aria-hidden="true">⚙</span> Settings</button>
         </nav>
@@ -285,6 +286,51 @@
             </div>
           </div>
         </section>
+        <section class="utility-view app-view learner-view" id="learner-view" hidden>
+          <div class="learner-shell">
+            <header class="learner-header">
+              <div>
+                <p class="eyebrow">ROBO AI TUTOR</p>
+                <h1>Learner</h1>
+                <p class="learner-intro">Ask questions or request a story. Your tutor answers aloud, with a readable transcript.</p>
+              </div>
+              <div class="learner-header-actions">
+                <button type="button" class="learner-tool-button" id="learner-transcript-toggle" aria-expanded="false" aria-controls="learner-transcript">Transcript</button>
+                <button type="button" class="learner-tool-button learner-add-files" id="learner-add-files" aria-label="Add files" title="Add up to 15 files">＋</button>
+                <input id="learner-file-input" type="file" multiple hidden>
+              </div>
+            </header>
+            <div class="learner-file-row">
+              <div id="learner-selected-files" class="learner-selected-files" aria-live="polite" hidden></div>
+              <button type="button" class="learner-change-tutor" id="learner-change-tutor">Choose another tutor</button>
+            </div>
+            <div class="learner-main">
+              <section class="learner-stage" aria-label="AI tutor">
+                <div class="learner-orbit learner-orbit-one" aria-hidden="true"></div>
+                <div class="learner-orbit learner-orbit-two" aria-hidden="true"></div>
+                <div class="learner-portrait" id="learner-avatar-stage">
+                  <img id="learner-avatar" src="robo-icon.ico" alt="ROBO AI tutor">
+                  <span class="learner-mouth" aria-hidden="true"></span>
+                </div>
+                <div class="learner-equalizer" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+                <p class="learner-tutor-name" id="learner-tutor-name" data-user-content="true">Choose a tutor to begin</p>
+                <p class="learner-speaking-status" id="learner-speaking-status" role="status" aria-live="polite">Select Learner in the navigation to get started.</p>
+              </section>
+              <section class="learner-transcript" id="learner-transcript" aria-label="Tutor transcript" hidden>
+                <div class="learner-transcript-heading"><h2>Transcript</h2><span>Questions and spoken replies</span></div>
+                <ol class="learner-transcript-list" id="learner-transcript-list" aria-live="polite"></ol>
+                <p class="learner-transcript-empty" id="learner-transcript-empty">Your conversation will appear here.</p>
+              </section>
+            </div>
+            <form class="learner-composer" id="learner-chat-form">
+              <label class="sr-only" for="learner-chat-input">Ask your tutor a question</label>
+              <textarea id="learner-chat-input" rows="1" maxlength="8000" placeholder="Ask your tutor or request a story..." autocomplete="off"></textarea>
+              <button type="button" class="learner-microphone" id="learner-microphone" aria-label="Speak to your tutor" title="Speak to your tutor">🎙</button>
+              <button type="submit" id="learner-send" aria-label="Send to tutor">↑</button>
+            </form>
+            <p class="learner-disclaimer">Voice playback and optional speech input use your browser's speech services. Uploaded files are processed by ROBO; they are not executed.</p>
+          </div>
+        </section>
         <section class="utility-view app-view" id="image-generator-view" hidden>
           <div class="utility-card image-generator-panel">
             <p class="eyebrow">CREATIVE STUDIO</p>
@@ -377,7 +423,22 @@
       </div>
     </dialog>
 
+    <dialog class="learner-gender-dialog" id="learner-gender-dialog" aria-labelledby="learner-gender-title">
+      <form method="dialog" class="learner-gender-card">
+        <button type="submit" class="learner-gender-close" aria-label="Close tutor selection">×</button>
+        <p class="eyebrow">MEET YOUR TUTOR</p>
+        <h2 id="learner-gender-title">What is your gender?</h2>
+        <p>Choose an animated tutor, or continue without sharing a preference.</p>
+        <div class="learner-gender-options">
+          <button type="button" data-tutor-gender="male">Male <span aria-hidden="true">→</span></button>
+          <button type="button" data-tutor-gender="female">Female <span aria-hidden="true">→</span></button>
+          <button type="button" data-tutor-gender="neutral">Rather not say <span aria-hidden="true">→</span></button>
+        </div>
+        <p class="learner-gender-note">Your choice is used only to select the tutor shown in this session.</p>
+      </form>
+    </dialog>
+
     <script src="explorations.js"></script>
-    <script src="app.js?v=robo-google-search-1"></script>
+    <script src="app.js?v=learner-tutor-2"></script>
   </body>
 </html>

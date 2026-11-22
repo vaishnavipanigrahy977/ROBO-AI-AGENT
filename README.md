@@ -2,6 +2,8 @@
 
 A responsive ROBO chat workspace with local chat history, chat search, student profiles, explanation-style preferences, website-and-response language settings, light/dark themes, and an immersive-exploration gallery inside the **Students** section. The gallery has exactly 20 curated topics and these six filters, in order: **All**, **How Things Work**, **Space**, **Human Body**, **Nature**, and **History**. The Freshwater Swamp Ecosystem is featured; each topic card opens its own illustrated scene with four guided learning stops and interactive hotspots. Chat searches the configured web source, cites results, refuses sensitive-content requests, supports programming help through Gemini, and accepts up to 15 files for analysis and summaries.
 
+The **Learner** section offers the Zia and Kian tutors, spoken answers, optional microphone input, and a readable transcript drawer. It uses the browser's speech synthesis voices, selecting a voice with a matching gender label when available and falling back to a distinct pitch if the browser does not identify voice gender. Voice playback requires browser speech synthesis support; voice input requires browser speech recognition and microphone permission. Typing remains available in unsupported browsers. Tutor file uploads use the existing server-side file processing and safety checks, with a limit of 15 files (1 MB each and 5 MB combined).
+
 The supplied `robo-icon.ico` is used for the app icon, splash screen, and ROBO identity marks. Light and dark themes update the interface palette and text contrast across the workspace, forms, and dialogs.
 
 ## Run locally
