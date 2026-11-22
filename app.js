@@ -20,6 +20,7 @@ let learnerTutor = null;
 let learnerFiles = [];
 let learnerBusy = false;
 let learnerSpeechSequence = 0;
+let learnerMouthTimers = [];
 let learnerRecognition = null;
 let learnerListening = false;
 const MAX_CHAT_FILES = 15;
@@ -1084,7 +1085,10 @@ function openTutorGenderDialog() {
 }
 
 function stopLearnerAnimation() {
-  document.querySelector(".learner-stage").classList.remove("is-speaking");
+  clearLearnerMouthTimers();
+  const stage = document.querySelector(".learner-stage");
+  stage.classList.remove("is-speaking");
+  delete stage.dataset.viseme;
   document.querySelector("#learner-speaking-status").textContent = learnerTutor
     ? `${learnerTutor.name} is ready. Click the microphone, then speak.`
     : "Select Learner in the navigation to get started.";
@@ -1101,6 +1105,31 @@ function stopLearnerSpeech() {
   microphone.title = "Click to start listening, then speak";
   microphone.classList.remove("is-listening");
   stopLearnerAnimation();
+}
+
+function clearLearnerMouthTimers() {
+  learnerMouthTimers.forEach(timer => window.clearTimeout(timer));
+  learnerMouthTimers = [];
+}
+
+function animateLearnerMouth(word, sequence) {
+  const stage = document.querySelector(".learner-stage");
+  const vowelGroups = word.toLowerCase().match(/[aeiouy]+/g) || [""];
+  const visemes = vowelGroups.map(group =>
+    /[ou]/.test(group) ? "round" : /a/.test(group) ? "open" : "wide"
+  );
+  const duration = Math.max(180, Math.min(420, word.length * 48));
+  const interval = duration / visemes.length;
+  clearLearnerMouthTimers();
+  stage.dataset.viseme = "closed";
+  visemes.forEach((viseme, index) => {
+    learnerMouthTimers.push(window.setTimeout(() => {
+      if (sequence === learnerSpeechSequence) stage.dataset.viseme = viseme;
+    }, index * interval));
+  });
+  learnerMouthTimers.push(window.setTimeout(() => {
+    if (sequence === learnerSpeechSequence) stage.dataset.viseme = "closed";
+  }, duration));
 }
 
 function addLearnerTranscript(speaker, text) {
@@ -1124,6 +1153,7 @@ function speakLearnerText(text) {
     return;
   }
   const sequence = ++learnerSpeechSequence;
+  clearLearnerMouthTimers();
   window.speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   const languageCode = languageCodeForName(settings.responseLanguage);
@@ -1147,7 +1177,14 @@ function speakLearnerText(text) {
   utterance.onstart = () => {
     if (sequence !== learnerSpeechSequence) return;
     stage.classList.add("is-speaking");
+    stage.dataset.viseme = "closed";
     document.querySelector("#learner-speaking-status").textContent = `${learnerTutor.name} is speaking.`;
+  };
+  utterance.onboundary = event => {
+    if (sequence !== learnerSpeechSequence || !Number.isInteger(event.charIndex)) return;
+    if (event.name && event.name !== "word") return;
+    const word = text.slice(event.charIndex).match(/^[^\s.,!?;:()[\]{}]+/);
+    if (word) animateLearnerMouth(word[0].replace(/^['"“”]+|['"“”]+$/g, ""), sequence);
   };
   utterance.onend = () => {
     if (sequence === learnerSpeechSequence) stopLearnerAnimation();

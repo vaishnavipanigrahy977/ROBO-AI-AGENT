@@ -528,10 +528,13 @@ h2 { font-size: 24px; line-height: 1.25; margin: 5px 0 0; font-weight: 700; }
 .learner-portrait { position: relative; z-index: 1; width: clamp(190px, 32vh, 360px); max-width: 72%; aspect-ratio: 1; display: grid; place-items: center; overflow: hidden; border: 1px solid #8271c766; border-radius: 34%; background: radial-gradient(circle at 50% 42%, #302556 0, #19182f 58%, #101225 100%); box-shadow: 0 0 0 9px #8a75e60d, 0 20px 70px #03040dbb, inset 0 0 38px #ad98ff18; }
 .learner-portrait img { width: 100%; height: 100%; object-fit: contain; }
 .learner-portrait:not(.has-portrait) img { width: 42%; height: 42%; object-fit: contain; filter: drop-shadow(0 0 22px #9a7aff80); }
-.learner-mouth { position: absolute; top: 40%; left: 50%; width: 22px; height: 5px; border: 1px solid #d58d9d; border-radius: 50%; background: linear-gradient(#dc8b9d 0 27%, #a94e66 29% 100%); opacity: 0; transform: translateX(-50%) scaleY(.7); box-shadow: 0 1px 4px #55293688; }
-.learner-portrait[data-tutor-gender="female"] .learner-mouth { top: 48%; }
-.learner-portrait[data-tutor-gender="male"] .learner-mouth { top: 37%; }
-.learner-stage.is-speaking .learner-mouth { opacity: .95; animation: learner-lipsync .28s ease-in-out infinite alternate; }
+.learner-mouth { position: absolute; top: 40%; left: 50%; width: 15px; height: 1px; border: 0; border-radius: 50%; background: transparent; opacity: 0; transform: translate(-50%, -50%) scaleY(.5); box-shadow: none; }
+.learner-portrait[data-tutor-gender="female"] .learner-mouth { top: 45.8%; width: 16px; --learner-lip-color: #d7708e; --learner-lip-highlight: #f294b0; --learner-mouth-inner: #700d2d; }
+.learner-portrait[data-tutor-gender="male"] .learner-mouth { top: 35.5%; width: 13px; --learner-lip-color: #c67b65; --learner-lip-highlight: #e58c79; --learner-mouth-inner: #873d30; }
+.learner-stage.is-speaking .learner-mouth { opacity: .9; transition: width .1s ease, height .1s ease, background-color .1s ease, border-radius .1s ease, transform .1s ease; }
+.learner-stage.is-speaking[data-viseme="wide"] .learner-mouth { height: 2px; background: var(--learner-lip-color); transform: translate(-50%, -50%) scaleY(.8); }
+.learner-stage.is-speaking[data-viseme="open"] .learner-mouth { height: 5px; border-radius: 45%; background: linear-gradient(180deg, var(--learner-lip-highlight) 0 22%, var(--learner-lip-color) 24% 43%, var(--learner-mouth-inner) 48% 72%, var(--learner-lip-color) 78% 100%); transform: translate(-50%, -50%) scaleY(1); }
+.learner-stage.is-speaking[data-viseme="round"] .learner-mouth { width: 8px; height: 6px; border-radius: 50%; background: linear-gradient(180deg, var(--learner-lip-highlight) 0 20%, var(--learner-mouth-inner) 35% 78%, var(--learner-lip-color) 80%); transform: translate(-50%, -50%) scaleY(1); }
 .learner-stage.is-speaking .learner-portrait { animation: learner-float 1.7s ease-in-out infinite alternate; }
 .learner-equalizer { height: 18px; display: flex; align-items: center; justify-content: center; gap: 4px; margin-top: 13px; }
 .learner-equalizer i { width: 3px; height: 4px; border-radius: 3px; background: #ae98ff; opacity: .65; }
@@ -576,7 +579,6 @@ h2 { font-size: 24px; line-height: 1.25; margin: 5px 0 0; font-weight: 700; }
 @keyframes learner-float { to { transform: translateY(-4px) scale(1.012); } }
 @keyframes learner-panel-in { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: translateX(0); } }
 @keyframes learner-mic-pulse { to { box-shadow: 0 0 0 4px #ed91b123; } }
-@keyframes learner-lipsync { to { height: 11px; border-radius: 42% 42% 55% 55%; transform: translateX(-50%) scaleY(1); } }
 @media (max-width: 760px) {
   .learner-view { height: calc(100dvh - 55px); padding: 14px 12px; }
   .learner-shell { gap: 9px; }
@@ -596,5 +598,5 @@ h2 { font-size: 24px; line-height: 1.25; margin: 5px 0 0; font-weight: 700; }
   .learner-gender-card { padding: 24px 20px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .learner-stage.is-speaking .learner-portrait, .learner-stage.is-speaking .learner-equalizer i, .learner-stage.is-speaking .learner-mouth, .learner-main.has-transcript .learner-transcript, .learner-composer .learner-microphone.is-listening { animation: none; }
+  .learner-stage.is-speaking .learner-portrait, .learner-stage.is-speaking .learner-equalizer i, .learner-main.has-transcript .learner-transcript, .learner-composer .learner-microphone.is-listening { animation: none; }
 }
