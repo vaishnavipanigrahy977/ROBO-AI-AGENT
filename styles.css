@@ -558,9 +558,6 @@ h2 { font-size: 24px; line-height: 1.25; margin: 5px 0 0; font-weight: 700; }
 .learner-composer textarea:focus-visible { outline: none; }
 .learner-composer textarea:disabled { opacity: .6; }
 .learner-composer button { flex: 0 0 auto; width: 38px; height: 38px; border: 0; border-radius: 11px; background: linear-gradient(140deg, #8b70f3, #6447c4); color: #fff; font-size: 22px; cursor: pointer; }
-.learner-composer .learner-microphone { border: 1px solid #4a466d; background: #252341; color: #d7ceff; font-size: 17px; }
-.learner-composer .learner-microphone.is-listening { border-color: #e88aab; background: #693147; color: #fff; animation: learner-mic-pulse .9s ease-in-out infinite alternate; }
-.learner-composer .learner-microphone:disabled { cursor: not-allowed; opacity: .48; }
 .learner-composer button:disabled { cursor: wait; opacity: .6; }
 .learner-disclaimer { margin: 0; color: #777993; font-size: 9px; line-height: 1.5; text-align: center; }
 .learner-gender-dialog { width: min(430px, calc(100vw - 28px)); border: 1px solid #484365; border-radius: 20px; padding: 0; background: #0c0e1e; color: #f2efff; box-shadow: 0 28px 100px #02030bba; }
@@ -578,7 +575,6 @@ h2 { font-size: 24px; line-height: 1.25; margin: 5px 0 0; font-weight: 700; }
 @keyframes learner-wave { to { height: 16px; opacity: 1; } }
 @keyframes learner-float { to { transform: translateY(-4px) scale(1.012); } }
 @keyframes learner-panel-in { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: translateX(0); } }
-@keyframes learner-mic-pulse { to { box-shadow: 0 0 0 4px #ed91b123; } }
 @media (max-width: 760px) {
   .learner-view { height: calc(100dvh - 55px); padding: 14px 12px; }
   .learner-shell { gap: 9px; }
@@ -598,5 +594,5 @@ h2 { font-size: 24px; line-height: 1.25; margin: 5px 0 0; font-weight: 700; }
   .learner-gender-card { padding: 24px 20px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .learner-stage.is-speaking .learner-portrait, .learner-stage.is-speaking .learner-equalizer i, .learner-main.has-transcript .learner-transcript, .learner-composer .learner-microphone.is-listening { animation: none; }
+  .learner-stage.is-speaking .learner-portrait, .learner-stage.is-speaking .learner-equalizer i, .learner-main.has-transcript .learner-transcript { animation: none; }
 }

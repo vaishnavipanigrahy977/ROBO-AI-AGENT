@@ -21,8 +21,6 @@ let learnerFiles = [];
 let learnerBusy = false;
 let learnerSpeechSequence = 0;
 let learnerMouthTimers = [];
-let learnerRecognition = null;
-let learnerListening = false;
 const MAX_CHAT_FILES = 15;
 const MAX_CHAT_FILE_BYTES = 1024 * 1024;
 const MAX_CHAT_FILES_BYTES = 5 * 1024 * 1024;
@@ -1090,20 +1088,13 @@ function stopLearnerAnimation() {
   stage.classList.remove("is-speaking");
   delete stage.dataset.viseme;
   document.querySelector("#learner-speaking-status").textContent = learnerTutor
-    ? `${learnerTutor.name} is ready. Click the microphone, then speak.`
+    ? `${learnerTutor.name} is ready. Type a question below.`
     : "Select Learner in the navigation to get started.";
 }
 
 function stopLearnerSpeech() {
   learnerSpeechSequence += 1;
   if ("speechSynthesis" in window) window.speechSynthesis.cancel();
-  if (learnerListening && learnerRecognition) learnerRecognition.abort();
-  learnerListening = false;
-  const microphone = document.querySelector("#learner-microphone");
-  microphone.setAttribute("aria-pressed", "false");
-  microphone.setAttribute("aria-label", "Start voice question");
-  microphone.title = "Click to start listening, then speak";
-  microphone.classList.remove("is-listening");
   stopLearnerAnimation();
 }
 
@@ -1200,70 +1191,6 @@ function speakLearnerText(text) {
   window.speechSynthesis.speak(utterance);
 }
 
-function toggleLearnerListening() {
-  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const button = document.querySelector("#learner-microphone");
-  if (!Recognition) {
-    document.querySelector("#learner-speaking-status").textContent =
-      "Speech input is not available in this browser. You can type to your tutor.";
-    return;
-  }
-  if (learnerListening && learnerRecognition) {
-    learnerRecognition.stop();
-    return;
-  }
-
-  const recognition = new Recognition();
-  recognition.lang = languageCodeForName(settings.responseLanguage) || "en-US";
-  recognition.interimResults = false;
-  recognition.maxAlternatives = 1;
-  recognition.onstart = () => {
-    learnerListening = true;
-    button.setAttribute("aria-pressed", "true");
-    button.setAttribute("aria-label", "Stop listening");
-    button.title = "Stop listening";
-    button.classList.add("is-listening");
-    document.querySelector("#learner-speaking-status").textContent = "Listening… speak now.";
-  };
-  recognition.onresult = event => {
-    const recognized = Array.from(event.results)
-      .map(result => result[0] && result[0].transcript)
-      .filter(Boolean)
-      .join(" ")
-      .trim();
-    if (!recognized) return;
-    document.querySelector("#learner-chat-input").value = recognized;
-    sendLearnerMessage();
-  };
-  recognition.onerror = event => {
-    if (event.error !== "aborted" && event.error !== "no-speech") {
-      document.querySelector("#learner-speaking-status").textContent =
-        event.error === "not-allowed" || event.error === "service-not-allowed"
-          ? "Microphone access was denied. You can type to your tutor."
-          : "Speech input is unavailable right now. You can type to your tutor.";
-    }
-  };
-  recognition.onend = () => {
-    learnerListening = false;
-    button.setAttribute("aria-pressed", "false");
-    button.setAttribute("aria-label", "Start voice question");
-    button.title = "Click to start listening, then speak";
-    button.classList.remove("is-listening");
-    const status = document.querySelector("#learner-speaking-status");
-    if (status.textContent.startsWith("Listening")) {
-      status.textContent = `${learnerTutor.name} is ready. Click the microphone to ask another question.`;
-    }
-  };
-  learnerRecognition = recognition;
-  try {
-    recognition.start();
-  } catch (error) {
-    console.error("ROBO could not start speech input.", error);
-    document.querySelector("#learner-speaking-status").textContent =
-      "Speech input could not start. Check microphone access, or type to your tutor.";
-  }
-}
-
 function chooseLearnerTutor(gender) {
   const tutors = {
     male: { name: "Kian", gender, image: "assets/male-tutor.png", greeting: "My name is Kian and i am a humanoid robot" },
@@ -1279,7 +1206,7 @@ function chooseLearnerTutor(gender) {
   portrait.classList.toggle("has-portrait", gender !== "neutral");
   document.querySelector("#learner-tutor-name").textContent = learnerTutor.name;
   document.querySelector("#learner-speaking-status").textContent =
-    `${learnerTutor.name} is ready. Click the microphone, then speak, or type below.`;
+    `${learnerTutor.name} is ready. Type a question below.`;
   document.querySelector("#learner-gender-dialog").close();
   addLearnerTranscript(learnerTutor.name, learnerTutor.greeting);
   speakLearnerText(learnerTutor.greeting);
@@ -1330,7 +1257,6 @@ async function sendLearnerMessage() {
   }
   if (EXPLICIT_SEXUAL_REQUEST.test(value) || isSensitiveActionRequest(value) ||
       /\b(?:suicide|self[- ]harm|nudity|nude|naked|porn|sexual content|sexually explicit)\b/i.test(value)) {
-    if (learnerListening && learnerRecognition) learnerRecognition.abort();
     input.value = "";
     learnerFiles = [];
     renderLearnerFiles();
@@ -1342,7 +1268,6 @@ async function sendLearnerMessage() {
   }
   if (!learnerFiles.length &&
       /^\s*(?:(?:hi|hello|hey)[,!\s]*)*(?:what(?:'s| is) your name|who are you)\s*[?.!]*\s*$/i.test(value)) {
-    if (learnerListening && learnerRecognition) learnerRecognition.abort();
     input.value = "";
     const identity = learnerTutor.gender === "male"
       ? "My name is Kian and i am a humanoid robot"
@@ -1355,7 +1280,6 @@ async function sendLearnerMessage() {
     return;
   }
 
-  if (learnerListening && learnerRecognition) learnerRecognition.abort();
   learnerBusy = true;
   const send = document.querySelector("#learner-send");
   send.disabled = true;
@@ -2206,12 +2130,6 @@ document.querySelector("#learner-chat-input").addEventListener("keydown", event 
     document.querySelector("#learner-chat-form").requestSubmit();
   }
 });
-const learnerMicrophone = document.querySelector("#learner-microphone");
-if (!window.SpeechRecognition && !window.webkitSpeechRecognition) {
-  learnerMicrophone.disabled = true;
-  learnerMicrophone.title = "Speech input is not available in this browser.";
-}
-learnerMicrophone.addEventListener("click", toggleLearnerListening);
 document.querySelector("#attach-files").addEventListener("click", () => {
   document.querySelector("#chat-file-input").click();
 });
