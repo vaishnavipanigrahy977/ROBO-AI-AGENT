@@ -1171,12 +1171,12 @@ function speakLearnerText(text) {
   utterance.lang = languageCode || "en-US";
   utterance.rate = 0.96;
   const isFemaleTutor = learnerTutor && learnerTutor.gender === "female";
-  utterance.pitch = learnerTutor && learnerTutor.gender === "male" ? 0.82 : isFemaleTutor ? 1.12 : 1;
+  utterance.pitch = learnerTutor && learnerTutor.gender === "male" ? 0.76 : isFemaleTutor ? 1.12 : 1;
   const voices = window.speechSynthesis.getVoices();
   const languagePrefix = utterance.lang.toLowerCase().split("-")[0];
   const genderVoicePattern = isFemaleTutor
     ? /\b(?:female|woman|zira|jenny|aria|ava|samantha|karen|susan|victoria|tessa|hazel|heera|priya|natasha|serena|allison|joanna|kendra|kimberly|laura|lucia)\b/i
-    : /\b(?:male|man|david|guy|mark|thomas|james|john|daniel|alex|fred|george|ryan|rishi|andrew|brian|christopher|eric|kevin|matthew|oliver|jorge)\b/i;
+    : /\b(?:male|man|david|guy|mark|thomas|james|john|daniel|alex|fred|george|ryan|rishi|andrew|brian|christopher|eric|kevin|matthew|oliver|jorge|bruce|ralph|albert|tom|eddy)\b/i;
   const voice = learnerTutor && learnerTutor.gender !== "neutral"
     ? voices.find(item => genderVoicePattern.test(item.name) &&
       item.lang.toLowerCase().startsWith(languagePrefix)) ||
